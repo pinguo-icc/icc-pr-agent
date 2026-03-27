@@ -1,0 +1,9 @@
+.git
+.pr_reviews
+__pycache__
+*.pyc
+.env
+.kiro
+tests
+test_webhook.sh
+.pr_reviews
