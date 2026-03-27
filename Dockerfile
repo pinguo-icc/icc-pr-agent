@@ -1,10 +1,15 @@
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
+
+ENV PIP_PROGRESS_BAR=off \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com
+
+RUN pip install --no-cache-dir pip>=24.2
+
 COPY pyproject.toml .
-RUN pip install --no-cache-dir --progress-bar off --prefix=/install \
-    -i https://mirrors.aliyun.com/pypi/simple/ \
-    --trusted-host mirrors.aliyun.com .
+RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.11-slim
 
