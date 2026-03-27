@@ -66,7 +66,7 @@ class TestRecordStoreSave:
         record = _make_record()
         store.save(record)
 
-        expected_dir = tmp_path / "github" / "owner_repo_42"
+        expected_dir = tmp_path / "github" / "owner" / "repo" / "prs" / "42"
         assert expected_dir.is_dir()
 
         json_files = list(expected_dir.glob("*.json"))
@@ -85,7 +85,7 @@ class TestRecordStoreSave:
         )
         store.save(record)
 
-        pr_dir = tmp_path / "github" / "owner_repo_42"
+        pr_dir = tmp_path / "github" / "owner" / "repo" / "prs" / "42"
         json_files = list(pr_dir.glob("*.json"))
         assert len(json_files) == 1
         assert json_files[0].name == (
@@ -107,7 +107,7 @@ class TestRecordStoreSave:
         store.save(r1)
         store.save(r2)
 
-        pr_dir = tmp_path / "github" / "owner_repo_42"
+        pr_dir = tmp_path / "github" / "owner" / "repo" / "prs" / "42"
         json_files = list(pr_dir.glob("*.json"))
         assert len(json_files) == 2
 
@@ -121,7 +121,7 @@ class TestRecordStoreSave:
         record = _make_record(diff_report=diff_report)
         store.save(record)
 
-        pr_dir = tmp_path / "github" / "owner_repo_42"
+        pr_dir = tmp_path / "github" / "owner" / "repo" / "prs" / "42"
         json_files = list(pr_dir.glob("*.json"))
         with open(json_files[0], "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -252,8 +252,8 @@ class TestRecordStoreGetHistory:
         record = _make_record()
         store.save(record)
 
-        # Write a corrupt JSON file
-        pr_dir = tmp_path / "github" / "owner_repo_42"
+        # Write a corrupt JSON file in the same PR directory
+        pr_dir = tmp_path / "github" / "owner" / "repo" / "prs" / "42"
         corrupt = pr_dir / "corrupt.json"
         corrupt.write_text("not valid json", encoding="utf-8")
 

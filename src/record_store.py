@@ -16,7 +16,7 @@ class RecordStore:
 
     Directory layout::
 
-        {storage_dir}/{platform}/{pr_id_sanitized}/{timestamp}_{version_id}.json
+        {storage_dir}/{platform}/{owner}/{repo}/prs/{pr_number}/{timestamp}_{version_id}.json
     """
 
     def __init__(self, storage_dir: str = ".pr_reviews") -> None:
@@ -55,18 +55,24 @@ class RecordStore:
         """Return all records for *pr_id*, ascending."""
         records: list[ReviewRecord] = []
 
-        sanitized = self._sanitize_pr_id(pr_id)
-
-        # Search across all platform directories
         if not self._storage_dir.exists():
             return records
 
+        owner, repo, number = self._parse_pr_id(pr_id)
+
+        # Search across all platform directories
         for platform_dir in self._storage_dir.iterdir():
             if not platform_dir.is_dir():
                 continue
-            pr_dir = platform_dir / sanitized
+            # Try new layout: {platform}/{owner}/{repo}/prs/{number}/
+            pr_dir = platform_dir / owner / repo / "prs" / number
             if not pr_dir.is_dir():
-                continue
+                # Fallback: legacy flat layout {platform}/{owner_repo_number}/
+                legacy = platform_dir / self._sanitize_pr_id(pr_id)
+                if legacy.is_dir():
+                    pr_dir = legacy
+                else:
+                    continue
             for json_file in pr_dir.glob("*.json"):
                 try:
                     with open(json_file, "r", encoding="utf-8") as fh:
@@ -88,12 +94,26 @@ class RecordStore:
     # ------------------------------------------------------------------
 
     def _pr_dir(self, platform: str, pr_id: str) -> Path:
-        sanitized = self._sanitize_pr_id(pr_id)
-        return self._storage_dir / platform / sanitized
+        owner, repo, number = self._parse_pr_id(pr_id)
+        return self._storage_dir / platform / owner / repo / "prs" / number
+
+    @staticmethod
+    def _parse_pr_id(pr_id: str) -> tuple[str, str, str]:
+        """Parse 'owner/repo#number' into (owner, repo, number)."""
+        # pr_id format: "pinguo-icc/order-svc#424"
+        if "#" in pr_id:
+            repo_part, number = pr_id.rsplit("#", 1)
+        else:
+            repo_part, number = pr_id, "unknown"
+        if "/" in repo_part:
+            owner, repo = repo_part.split("/", 1)
+        else:
+            owner, repo = "unknown", repo_part
+        return owner, repo, number
 
     @staticmethod
     def _sanitize_pr_id(pr_id: str) -> str:
-        """Replace ``/`` and ``#`` with ``_``."""
+        """Replace ``/`` and ``#`` with ``_`` (legacy compat)."""
         return pr_id.replace("/", "_").replace("#", "_")
 
     @staticmethod

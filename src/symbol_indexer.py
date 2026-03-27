@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import subprocess
-import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -86,11 +85,15 @@ class SymbolIndexer:
         changed_files: list[str] | None = None,
     ) -> SymbolIndex:
         """构建或增量更新符号索引。"""
+        # Resolve persistent repo directory
+        if not repo_dir:
+            repo_dir = self._ensure_repo(repo_url, branch)
+
         # Try loading cache
         cache_path = self._cache_path(repo_url)
         cached_index = self._load_cache(cache_path)
 
-        if cached_index and changed_files:
+        if cached_index and cached_index.entries and changed_files:
             # Incremental update: re-parse only changed files
             logger.info("Incremental symbol index update for %d files", len(changed_files))
             existing = {e.file_path: e for e in cached_index.entries}
@@ -98,46 +101,90 @@ class SymbolIndexer:
             for f in changed_files:
                 existing.pop(f, None)
             # Re-parse changed files
-            if repo_dir:
-                for f in changed_files:
-                    full_path = os.path.join(repo_dir, f)
-                    lang = self._detect_language(f)
-                    if lang and os.path.isfile(full_path):
-                        new_entries = self._parse_file(full_path, lang, f)
-                        for e in new_entries:
-                            existing[e.file_path + ":" + e.name] = e
+            for f in changed_files:
+                full_path = os.path.join(repo_dir, f)
+                lang = self._detect_language(f)
+                if lang and os.path.isfile(full_path):
+                    new_entries = self._parse_file(full_path, lang, f)
+                    for e in new_entries:
+                        existing[e.file_path + ":" + e.name] = e
             entries = list(existing.values())
             index = SymbolIndex(entries)
             self._save_cache(cache_path, index)
             return index
 
         # Full build
-        work_dir = repo_dir
-        cloned = False
-        if not work_dir:
+        entries = self._scan_directory(repo_dir)
+        index = SymbolIndex(entries)
+        self._save_cache(cache_path, index)
+        return index
+
+    def _repo_dir_path(self, repo_url: str) -> str:
+        """Generate persistent repo directory path: {cache_dir}/{platform}/{owner}/{repo}/code/."""
+        platform, owner, repo = self._parse_repo_url(repo_url)
+        return os.path.join(self._cache_dir, platform, owner, repo, "code")
+
+    @staticmethod
+    def _parse_repo_url(repo_url: str) -> tuple[str, str, str]:
+        """Parse repo URL into (platform, owner, repo).
+
+        Example: https://github.com/pinguo-icc/order-svc.git -> (github, pinguo-icc, order-svc)
+        """
+        import re
+        m = re.match(r"https?://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$", repo_url)
+        if m:
+            host = m.group(1)  # github.com
+            owner = m.group(2)
+            repo = m.group(3)
+            # Normalize host to platform name
+            if "github" in host:
+                platform = "github"
+            elif "gitlab" in host:
+                platform = "gitlab"
+            else:
+                platform = host.replace(".", "_")
+            return platform, owner, repo
+        # Fallback: use sanitized URL
+        safe = repo_url.replace("/", "_").replace(":", "_").replace(".", "_")
+        return "unknown", safe, "repo"
+
+    def _ensure_repo(self, repo_url: str, branch: str) -> str:
+        """Clone or update repo in persistent directory under cache_dir/repos/."""
+        repo_dir = self._repo_dir_path(repo_url)
+        git_dir = os.path.join(repo_dir, ".git")
+
+        if os.path.isdir(git_dir):
+            # Already cloned — fetch and reset to latest
+            logger.info("更新已有仓库: %s (branch=%s)", repo_dir, branch)
             try:
-                work_dir = self._clone_repo(repo_url, branch)
-                cloned = True
+                subprocess.run(
+                    ["git", "fetch", "origin", branch, "--depth=1"],
+                    cwd=repo_dir, check=True, capture_output=True, timeout=120,
+                )
+                subprocess.run(
+                    ["git", "reset", "--hard", f"origin/{branch}"],
+                    cwd=repo_dir, check=True, capture_output=True, timeout=30,
+                )
+                subprocess.run(
+                    ["git", "clean", "-fdx"],
+                    cwd=repo_dir, check=True, capture_output=True, timeout=30,
+                )
+                return repo_dir
             except Exception as exc:
-                logger.warning("Failed to clone repo: %s", exc)
-                raise SymbolIndexError(f"Clone failed: {exc}") from exc
-
-        try:
-            entries = self._scan_directory(work_dir)
-            index = SymbolIndex(entries)
-            self._save_cache(cache_path, index)
-            return index
-        finally:
-            if cloned and work_dir:
+                logger.warning("仓库更新失败，将重新 clone: %s", exc)
                 import shutil
-                shutil.rmtree(work_dir, ignore_errors=True)
+                shutil.rmtree(repo_dir, ignore_errors=True)
 
-    def _clone_repo(self, repo_url: str, branch: str) -> str:
-        """shallow clone 到临时目录。"""
-        tmp_dir = tempfile.mkdtemp(prefix="symbol_index_")
-        cmd = ["git", "clone", "--depth=1", "--branch", branch, repo_url, tmp_dir]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-        return tmp_dir
+        # Fresh clone
+        logger.info("Clone 仓库: %s -> %s", repo_url, repo_dir)
+        os.makedirs(repo_dir, exist_ok=True)
+        try:
+            cmd = ["git", "clone", "--depth=1", "--branch", branch, repo_url, repo_dir]
+            subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+            return repo_dir
+        except Exception as exc:
+            logger.warning("Failed to clone repo: %s", exc)
+            raise SymbolIndexError(f"Clone failed: {exc}") from exc
 
     def _scan_directory(self, root: str) -> list[SymbolEntry]:
         """Scan all files in directory, excluding third-party dirs."""
@@ -266,6 +313,21 @@ class SymbolIndexer:
     @staticmethod
     def _extract_name(node, source: bytes, language: str) -> str | None:
         """Extract symbol name from AST node."""
+        # Go method_declaration: method name is the field_identifier after receiver
+        if language == "go" and node.type == "method_declaration":
+            for child in node.children:
+                if child.type == "field_identifier":
+                    return source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
+            return None
+
+        # Go type_spec: name is the type_identifier child
+        if language == "go" and node.type == "type_spec":
+            for child in node.children:
+                if child.type == "type_identifier":
+                    return source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
+            return None
+
+        # Default: first identifier/name child
         for child in node.children:
             if child.type in ("identifier", "name", "type_identifier"):
                 return source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
@@ -317,11 +379,11 @@ class SymbolIndexer:
         return _LANG_MAP.get(ext)
 
     def _cache_path(self, repo_url: str) -> str:
-        """Generate cache file path from repo URL."""
-        safe_name = repo_url.replace("/", "_").replace(":", "_").replace(".", "_")
-        cache_dir = os.path.join(self._cache_dir, "symbol_cache")
+        """Generate cache file path: {cache_dir}/{platform}/{owner}/{repo}/data/symbols.json."""
+        platform, owner, repo = self._parse_repo_url(repo_url)
+        cache_dir = os.path.join(self._cache_dir, platform, owner, repo, "data")
         os.makedirs(cache_dir, exist_ok=True)
-        return os.path.join(cache_dir, f"{safe_name}.json")
+        return os.path.join(cache_dir, "symbols.json")
 
     @staticmethod
     def _load_cache(cache_path: str) -> SymbolIndex | None:

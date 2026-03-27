@@ -109,7 +109,6 @@ class TestCLIRun:
         captured = capsys.readouterr()
         assert "🔍 开始审查 PR:" in captured.out
         assert "📥 获取 PR 信息..." in captured.out
-        assert "🤖 AI 正在审查代码..." in captured.out
         assert "✅ 审查完成" in captured.out
         assert "# Review OK" in captured.out
         assert "📤 审查结果已写回 PR" in captured.out

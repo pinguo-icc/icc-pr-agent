@@ -141,6 +141,10 @@ class ReviewOrchestrator:
             review_result=review_result,
             diff_report=diff_report,
             created_at=datetime.now(timezone.utc).isoformat(),
+            prompt_tokens=self._ai_reviewer.total_prompt_tokens,
+            completion_tokens=self._ai_reviewer.total_completion_tokens,
+            total_tokens=self._ai_reviewer.total_tokens,
+            token_usage_by_group=self._ai_reviewer.token_usage_by_group or None,
         )
         self._record_store.save(record)
 

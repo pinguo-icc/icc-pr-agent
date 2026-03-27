@@ -63,6 +63,10 @@ class ReviewRecord:
     review_result: ReviewResult
     diff_report: ReviewDiffReport | None
     created_at: str  # ISO 8601
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    token_usage_by_group: list[TokenUsageByGroup] | None = None
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict suitable for JSON storage."""
@@ -89,6 +93,17 @@ class ReviewRecord:
                 "unresolved": self.diff_report.unresolved,
                 "new_issues": self.diff_report.new_issues,
             }
+        token_by_group = None
+        if self.token_usage_by_group:
+            token_by_group = [
+                {
+                    "group_name": g.group_name,
+                    "prompt_tokens": g.prompt_tokens,
+                    "completion_tokens": g.completion_tokens,
+                    "total_tokens": g.total_tokens,
+                }
+                for g in self.token_usage_by_group
+            ]
         return {
             "record_id": self.record_id,
             "pr_id": self.pr_id,
@@ -97,6 +112,12 @@ class ReviewRecord:
             "version_id": self.version_id,
             "review_result": result_dict,
             "diff_report": diff_report_dict,
+            "token_usage": {
+                "prompt_tokens": self.prompt_tokens,
+                "completion_tokens": self.completion_tokens,
+                "total_tokens": self.total_tokens,
+                "by_group": token_by_group,
+            },
             "created_at": self.created_at,
         }
 
@@ -128,6 +149,19 @@ class ReviewRecord:
                 unresolved=dr["unresolved"],
                 new_issues=dr["new_issues"],
             )
+        tu = data.get("token_usage") or {}
+        by_group_raw = tu.get("by_group")
+        by_group = None
+        if by_group_raw:
+            by_group = [
+                TokenUsageByGroup(
+                    group_name=g["group_name"],
+                    prompt_tokens=g["prompt_tokens"],
+                    completion_tokens=g["completion_tokens"],
+                    total_tokens=g["total_tokens"],
+                )
+                for g in by_group_raw
+            ]
         return cls(
             record_id=data["record_id"],
             pr_id=data["pr_id"],
@@ -137,6 +171,10 @@ class ReviewRecord:
             review_result=review_result,
             diff_report=diff_report,
             created_at=data["created_at"],
+            prompt_tokens=tu.get("prompt_tokens", 0),
+            completion_tokens=tu.get("completion_tokens", 0),
+            total_tokens=tu.get("total_tokens", 0),
+            token_usage_by_group=by_group,
         )
 
 
