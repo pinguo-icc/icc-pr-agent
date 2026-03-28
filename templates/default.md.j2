@@ -80,4 +80,4 @@
 
 ---
 
-<sub>🤖 此审查由 AI 自动生成（PR Review System），仅供参考，请结合实际情况判断。{% if token_usage %} | Token 消耗：输入 {{ token_usage.prompt_tokens }}，输出 {{ token_usage.completion_tokens }}，共计 {{ token_usage.total_tokens }}{% if token_usage_by_group %} | {% for g in token_usage_by_group %}{{ g.group_name }}: {{ "{:,}".format(g.total_tokens) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% endif %}</sub>
+<sub>🤖 此审查由 AI 自动生成，仅供参考，请结合实际情况判断。{% if token_usage %} | Token 消耗：输入 {{ token_usage.prompt_tokens }}，输出 {{ token_usage.completion_tokens }}，共计 {{ token_usage.total_tokens }}{% if token_usage_by_group %} | {% for g in token_usage_by_group %}{{ g.group_name }}: {{ "{:,}".format(g.total_tokens) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% endif %}{% if tools_used %} | 🔧 使用工具：{{ tools_used|join(', ') }}{% endif %}</sub>
