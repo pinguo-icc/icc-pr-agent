@@ -29,11 +29,8 @@
 | 🟡 Warning | {{ warning_issues|length }} |
 | 🔵 Suggestion | {{ suggestion_issues|length }} |
 
-{% if critical_issues|length > 0 %}
-### 🔴 严重问题（Critical）
-
-{% for issue in critical_issues %}
-**{{ loop.index }}. [{{ issue.category }}] `{{ issue.file_path }}`{% if issue.line_number %} (L{{ issue.line_number }}){% endif %}**
+{% macro render_issue(issue, index) %}
+**{{ index }}. [{{ issue.category }}] `{{ issue.file_path }}`{% if issue.line_number %} (L{{ issue.line_number }}){% endif %}**
 
 {{ issue.description }}
 
@@ -41,6 +38,19 @@
 > 💡 建议：{{ issue.suggestion }}
 {% endif %}
 
+{% if issue.example %}
+```
+{{ issue.example }}
+```
+{% endif %}
+
+{% endmacro %}
+
+{% if critical_issues|length > 0 %}
+### 🔴 严重问题（Critical）
+
+{% for issue in critical_issues %}
+{{ render_issue(issue, loop.index) }}
 {% endfor %}
 {% endif %}
 
@@ -48,14 +58,7 @@
 ### 🟡 警告（Warning）
 
 {% for issue in warning_issues %}
-**{{ loop.index }}. [{{ issue.category }}] `{{ issue.file_path }}`{% if issue.line_number %} (L{{ issue.line_number }}){% endif %}**
-
-{{ issue.description }}
-
-{% if issue.suggestion %}
-> 💡 建议：{{ issue.suggestion }}
-{% endif %}
-
+{{ render_issue(issue, loop.index) }}
 {% endfor %}
 {% endif %}
 
@@ -63,14 +66,7 @@
 ### 🔵 改进建议（Suggestion）
 
 {% for issue in suggestion_issues %}
-**{{ loop.index }}. [{{ issue.category }}] `{{ issue.file_path }}`{% if issue.line_number %} (L{{ issue.line_number }}){% endif %}**
-
-{{ issue.description }}
-
-{% if issue.suggestion %}
-> 💡 建议：{{ issue.suggestion }}
-{% endif %}
-
+{{ render_issue(issue, loop.index) }}
 {% endfor %}
 {% endif %}
 
@@ -81,8 +77,7 @@
 ---
 
 {% if token_usage or skills_loaded or tools_used %}
-<details>
-<summary>📈 审查详情</summary>
+### 📈 审查详情
 
 | 项目 | 详情 |
 |------|------|
@@ -91,7 +86,6 @@
 {% endfor %}{% endif %}{% if skills_loaded %}| 加载技能 | {{ skills_loaded|join(', ') }} |
 {% endif %}{% if tools_used %}| 使用工具 | {{ tools_used|join(', ') }} |
 {% endif %}
-</details>
 {% endif %}
 
 <sub>🤖 此审查由 AI 自动生成，仅供参考，请结合实际情况判断。</sub>

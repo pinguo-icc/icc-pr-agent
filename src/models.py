@@ -31,6 +31,7 @@ class ReviewIssue:
     category: str  # "quality" | "bug" | "security" | "improvement"
     description: str
     suggestion: str | None
+    example: str | None = None
 
 
 @dataclass

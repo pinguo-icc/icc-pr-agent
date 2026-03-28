@@ -1073,6 +1073,7 @@ class AIReviewer:
                 category=item.get("category", "improvement"),
                 description=item.get("description", ""),
                 suggestion=item.get("suggestion"),
+                example=item.get("example"),
             )
             for item in data.get("issues", [])
         ]
