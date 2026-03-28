@@ -144,11 +144,13 @@ prompts:
 # 支持 glob 语法：*（匹配文件名中任意字符）、**（匹配任意层级目录）、?（匹配单个字符）
 # ============================================================
 file_groups:
-  # 后端服务代码（Go + Proto + 配置）
+  # 后端服务代码（Go + Proto + 配置 YAML）
   backend:
     - "*.go"
     - "*.proto"
     - "configs/**"
+    - "*.yaml"
+    - "*.yml"
   # 前端代码（TypeScript/JavaScript + 样式）
   frontend:
     - "*.ts"
@@ -159,12 +161,10 @@ file_groups:
     - "*.css"
     - "*.less"
     - "*.scss"
-  # 基础设施和 CI/CD 配置
+  # 基础设施和 CI/CD
   infra:
     - "Dockerfile*"
     - "Makefile"
-    - "*.yml"
-    - "*.yaml"
   # 注意：default 组不需要显式配置，未匹配的文件自动归入
 
 # ============================================================
