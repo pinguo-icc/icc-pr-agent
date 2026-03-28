@@ -41,6 +41,7 @@ from src.models import (
 )
 from src.result_merger import ResultMerger
 from src.symbol_indexer import SymbolIndex, SymbolIndexer
+from src.langfuse_integration import create_trace, flush
 
 logger = get_logger(__name__)
 
@@ -175,6 +176,18 @@ class AIReviewer:
         """Trace data from all agent invocations."""
         return self._traces
 
+    @property
+    def tools_used(self) -> list[str]:
+        """Unique tool names invoked across all traces."""
+        names: list[str] = []
+        for trace in self._traces:
+            for msg in trace.get("messages", []):
+                for tc in msg.get("tool_calls", []):
+                    name = tc.get("name", "")
+                    if name and name not in names:
+                        names.append(name)
+        return names
+
     def _dump_messages(self, messages: list, group_name: str, batch_index: int) -> None:
         """Build trace data from message chain and store internally."""
         trace = {
@@ -209,6 +222,116 @@ class AIReviewer:
                 entry["usage_metadata"] = dict(usage)
             trace["messages"].append(entry)
         self._traces.append(trace)
+
+    def _record_langfuse_messages(self, messages: list, lf_trace) -> None:
+        """Record each message in the chain as Langfuse spans/generations.
+
+        Produces a readable trace tree:
+        - 📝 用户提问 → span
+        - 🤖 LLM 第N轮 → generation (with token usage)
+        -   🔧 调用 tool_name(args) → span (nested under the LLM generation)
+        -   📎 tool_name 返回结果 → span
+        """
+        if lf_trace is None:
+            return
+
+        llm_turn = 0
+        # Map tool_call_id → tool call info for matching tool results
+        pending_tool_calls: dict[str, dict] = {}
+
+        for i, msg in enumerate(messages):
+            role = getattr(msg, "type", "unknown")
+            content = getattr(msg, "content", "")
+            content_str = str(content)
+
+            if role == "human":
+                lf_trace.span(
+                    name="📝 用户提问",
+                    input={"content": content_str},
+                )
+
+            elif role == "ai":
+                llm_turn += 1
+                tool_calls = []
+                if hasattr(msg, "tool_calls"):
+                    for tc in (msg.tool_calls or []):
+                        tc_name = tc.get("name", "")
+                        tc_args = tc.get("args", {})
+                        tc_id = tc.get("id", "")
+                        tool_calls.append({
+                            "name": tc_name,
+                            "args": tc_args,
+                        })
+                        if tc_id:
+                            pending_tool_calls[tc_id] = {
+                                "name": tc_name,
+                                "args": tc_args,
+                            }
+
+                usage = getattr(msg, "usage_metadata", None)
+                usage_dict = {}
+                if usage:
+                    usage_dict = {
+                        "input": usage.get("input_tokens", 0),
+                        "output": usage.get("output_tokens", 0),
+                        "total": usage.get("total_tokens", 0),
+                    }
+
+                # Build descriptive name
+                if tool_calls:
+                    tc_names = ", ".join(tc["name"] for tc in tool_calls)
+                    gen_name = f"🤖 LLM 第{llm_turn}轮 → 调用 {tc_names}"
+                elif content_str.strip():
+                    gen_name = f"🤖 LLM 第{llm_turn}轮 → 最终回复"
+                else:
+                    gen_name = f"🤖 LLM 第{llm_turn}轮"
+
+                gen_output = {}
+                if content_str.strip():
+                    gen_output["response"] = content_str
+                if tool_calls:
+                    gen_output["tool_calls"] = tool_calls
+
+                gen = lf_trace.generation(
+                    name=gen_name,
+                    model=self._config.llm_model,
+                    output=gen_output,
+                    usage=usage_dict if usage_dict else None,
+                    metadata={
+                        "turn": llm_turn,
+                        "tool_call_count": len(tool_calls),
+                    },
+                )
+                gen.end()
+
+                # Record each tool call as a separate span
+                for tc in tool_calls:
+                    args_preview = ", ".join(
+                        f"{k}={str(v)[:80]}" for k, v in tc["args"].items()
+                    )
+                    lf_trace.span(
+                        name=f"🔧 {tc['name']}({args_preview})",
+                        input={"tool_name": tc["name"], "args": tc["args"]},
+                    )
+
+            elif role == "tool":
+                tool_name = getattr(msg, "name", "unknown")
+                tool_call_id = getattr(msg, "tool_call_id", "")
+
+                # Try to get the original call args
+                call_info = pending_tool_calls.pop(tool_call_id, None)
+                call_args = call_info["args"] if call_info else {}
+
+                # Truncate very long tool results for readability
+                result_preview = content_str[:2000]
+                if len(content_str) > 2000:
+                    result_preview += f"... ({len(content_str)} chars total)"
+
+                lf_trace.span(
+                    name=f"📎 {tool_name} 返回结果",
+                    input={"tool_name": tool_name, "call_args": call_args},
+                    output={"result": result_preview},
+                )
 
     def _build_model_string(self) -> str:
         """Build the provider:model string for init_chat_model."""
@@ -671,6 +794,18 @@ class AIReviewer:
                 f"{datetime.now(timezone.utc).timestamp()}"
             )
 
+            # Langfuse trace for this sub-agent
+            trace = create_trace(
+                name=f"pr-review-subagent-{group_name}",
+                metadata={
+                    "group_name": group_name,
+                    "batch_index": batch.batch_index,
+                },
+                tags=["sub-agent", group_name],
+            )
+            if trace:
+                trace.update(input={"prompt": prompt})
+
             # Execute directly (no nested thread pool — thread budget is managed
             # by the outer ThreadPoolExecutor in _review_with_subagents).
             result = sub_agent.invoke(
@@ -678,7 +813,9 @@ class AIReviewer:
                     "messages": [{"role": "user", "content": prompt}],
                     "files": all_files,
                 },
-                config={"configurable": {"thread_id": thread_id}},
+                config={
+                    "configurable": {"thread_id": thread_id},
+                },
             )
 
             # Parse response
@@ -709,6 +846,11 @@ class AIReviewer:
             elapsed = time.monotonic() - start_time
             review_result = self._parse_response(content)
 
+            # End Langfuse: record each message as span/generation
+            if trace:
+                self._record_langfuse_messages(messages, trace)
+                trace.update(output={"content": content})
+            flush()
             return SubAgentResult(
                 group_name=group_name,
                 batch_index=batch.batch_index,
@@ -790,12 +932,24 @@ class AIReviewer:
                 )
                 agent, skills_files = self._create_agent()
                 thread_id = f"review-{datetime.now(timezone.utc).timestamp()}"
+
+                # Langfuse trace for this invocation
+                trace = create_trace(
+                    name="pr-review-single",
+                    metadata={"attempt": attempt + 1},
+                    tags=["single-agent"],
+                )
+                if trace:
+                    trace.update(input={"prompt": prompt})
+
                 result = agent.invoke(
                     {
                         "messages": [{"role": "user", "content": prompt}],
                         "files": skills_files,
                     },
-                    config={"configurable": {"thread_id": thread_id}},
+                    config={
+                        "configurable": {"thread_id": thread_id},
+                    },
                 )
                 # Extract the final assistant message
                 messages = result.get("messages", [])
@@ -819,6 +973,11 @@ class AIReviewer:
                     self.total_completion_tokens += usage.get("output_tokens", 0)
                     self.total_tokens += usage.get("total_tokens", 0)
 
+                # End Langfuse generation with token usage
+                if trace:
+                    self._record_langfuse_messages(messages, trace)
+                    trace.update(output={"content": content})
+                flush()
                 return content
             except Exception as exc:  # noqa: BLE001
                 last_error = exc

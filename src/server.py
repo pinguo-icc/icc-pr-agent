@@ -25,6 +25,7 @@ from src.logger import get_logger
 from src.models import ReviewOptions
 from src.orchestrator import ReviewOrchestrator
 from src.record_store import RecordStore
+from src.langfuse_integration import init_langfuse
 from src.webhook.github_handler import (
     GitHubWebhookEvent,
     parse_pr_event,
@@ -48,6 +49,7 @@ _review_executor: ThreadPoolExecutor | None = None
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _config, _orchestrator, _record_store, _worker_task, _review_executor
     _config = Config.from_env()
+    init_langfuse(_config)
     _orchestrator = ReviewOrchestrator(_config)
     _record_store = RecordStore(_config.review_storage_dir)
     _review_executor = ThreadPoolExecutor(max_workers=1)

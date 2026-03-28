@@ -14,6 +14,8 @@ _CREDENTIAL_ENV_VARS: list[str] = [
     "WEBHOOK_SECRET_GITHUB",
     "WEBHOOK_SECRET_GITLAB",
     "WEBHOOK_SECRET_CODEUP",
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
 ]
 
 LOG_FORMAT = "[%(asctime)s] %(levelname)s %(name)s: %(message)s"

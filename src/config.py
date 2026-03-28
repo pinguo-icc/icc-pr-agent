@@ -98,6 +98,12 @@ class Config:
     # Token budget (0 = unlimited)
     token_budget: int = 0
 
+    # Langfuse observability
+    langfuse_enabled: bool = True
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "http://localhost:3000"
+
     @classmethod
     def from_env(
         cls, dotenv_path: str = ".env", yaml_path: str = "pr-review.yaml",
@@ -213,6 +219,14 @@ class Config:
             token_budget = default_token_budget
 
         return cls(
+            langfuse_enabled=os.environ.get(
+                "LANGFUSE_ENABLED", "true"
+            ).lower() in ("true", "1", "yes"),
+            langfuse_public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
+            langfuse_secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
+            langfuse_host=os.environ.get(
+                "LANGFUSE_HOST", "http://localhost:3000"
+            ),
             github_token=os.environ.get("GITHUB_TOKEN", ""),
             gitlab_token=os.environ.get("GITLAB_TOKEN", ""),
             gitlab_url=os.environ.get("GITLAB_URL", "https://gitlab.com"),

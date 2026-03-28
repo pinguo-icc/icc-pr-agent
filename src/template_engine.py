@@ -38,6 +38,7 @@ class TemplateEngine:
         excluded_files: list[dict] | None = None,
         token_usage: dict | None = None,
         token_usage_by_group: list[TokenUsageByGroup] | None = None,
+        tools_used: list[str] | None = None,
     ) -> str:
         """Render review result using a Jinja2 template.
 
@@ -76,4 +77,5 @@ class TemplateEngine:
             excluded_files=excluded_files,
             token_usage=token_usage,
             token_usage_by_group=token_usage_by_group,
+            tools_used=tools_used,
         )

@@ -129,6 +129,7 @@ class ReviewOrchestrator:
             filter_result.excluded_files,
             token_usage=token_usage,
             token_usage_by_group=self._ai_reviewer.token_usage_by_group or None,
+            tools_used=self._ai_reviewer.tools_used or None,
         )
 
         # m. Save record
