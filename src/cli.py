@@ -78,6 +78,11 @@ class CLIRunner:
 
         try:
             config = Config.from_env()
+
+            # Initialize Langfuse (same as server.py lifespan)
+            from src.langfuse_integration import init_langfuse
+            init_langfuse(config)
+
             orchestrator = ReviewOrchestrator(config)
 
             print(f"🔍 开始审查 PR: {parsed.pr_url}", flush=True)

@@ -41,7 +41,7 @@ from src.models import (
 )
 from src.result_merger import ResultMerger
 from src.symbol_indexer import SymbolIndex, SymbolIndexer
-from src.langfuse_integration import create_trace, flush
+from src.langfuse_integration import create_trace, create_span, flush
 
 logger = get_logger(__name__)
 
@@ -165,6 +165,8 @@ class AIReviewer:
         self._token_usage_by_group: list[TokenUsageByGroup] = []
         # Trace data for each agent invocation
         self._traces: list[dict] = []
+        # Langfuse top-level trace (set in review())
+        self._lf_trace = None
 
     @property
     def token_usage_by_group(self) -> list[TokenUsageByGroup]:
@@ -187,6 +189,23 @@ class AIReviewer:
                     if name and name not in names:
                         names.append(name)
         return names
+
+    @property
+    def skills_loaded(self) -> list[str]:
+        """Skill names actually loaded by the agent (extracted from read_file calls)."""
+        skills: list[str] = []
+        for trace in self._traces:
+            for msg in trace.get("messages", []):
+                for tc in msg.get("tool_calls", []):
+                    if tc.get("name") != "read_file":
+                        continue
+                    path = tc.get("args", {}).get("file_path", "")
+                    # /skills/<skill-name>/SKILL.md
+                    if path.startswith("/skills/") and path.endswith("/SKILL.md"):
+                        skill = path.split("/")[2]
+                        if skill and skill not in skills:
+                            skills.append(skill)
+        return skills
 
     def _dump_messages(self, messages: list, group_name: str, batch_index: int) -> None:
         """Build trace data from message chain and store internally."""
@@ -412,6 +431,25 @@ class AIReviewer:
 
         diff = pr_info.diff
 
+        # Create a single Langfuse trace for the entire PR review
+        # Build trace name: repo#pr_number@time
+        # e.g. "order-svc#365@20260328-082519"
+        _m = re.search(r'/([^/]+)/pull/(\d+)', pr_info.pr_url)
+        _now = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        _trace_name = f"{_m.group(1)}#{_m.group(2)}@{_now}" if _m else f"pr-review@{_now}"
+
+        self._lf_trace = create_trace(
+            name=_trace_name,
+            session_id=pr_info.pr_url,
+            metadata={
+                "pr_url": pr_info.pr_url,
+                "title": pr_info.title,
+                "source_branch": pr_info.source_branch,
+                "target_branch": pr_info.target_branch,
+            },
+            tags=["pr-review"],
+        )
+
         # Determine max_chunk_chars for the decision
         model = self._create_model()
         max_chunk_chars = ContextWindowDetector.detect(
@@ -422,14 +460,19 @@ class AIReviewer:
         has_file_groups = self._config.file_groups is not None
         if not has_file_groups and len(diff) <= max_chunk_chars:
             # Single Agent fast path (backward compatible)
-            return self._review_single(pr_info, diff)
-
-        if not has_file_groups and len(diff) > max_chunk_chars:
+            result = self._review_single(pr_info, diff)
+        elif not has_file_groups and len(diff) > max_chunk_chars:
             # Large diff but no file_groups → use legacy chunked path
-            return self._review_chunked(pr_info)
+            result = self._review_chunked(pr_info)
+        else:
+            # Sub-agent path
+            result = self._review_with_subagents(pr_info, max_chunk_chars)
 
-        # Sub-agent path
-        return self._review_with_subagents(pr_info, max_chunk_chars)
+        # Finalize Langfuse trace
+        if self._lf_trace:
+            self._lf_trace.update(output={"summary": result.summary})
+        flush()
+        return result
 
     # ------------------------------------------------------------------
     # Single-pass review (small diff) — fast path
@@ -800,14 +843,14 @@ class AIReviewer:
                 f"{datetime.now(timezone.utc).timestamp()}"
             )
 
-            # Langfuse trace for this sub-agent
-            trace = create_trace(
-                name=f"pr-review-subagent-{group_name}",
+            # Langfuse span under the top-level PR trace
+            trace = create_span(
+                self._lf_trace,
+                name=f"subagent-{group_name}-batch{batch.batch_index}",
                 metadata={
                     "group_name": group_name,
                     "batch_index": batch.batch_index,
                 },
-                tags=["sub-agent", group_name],
             )
             if trace:
                 trace.update(input={"prompt": prompt})
@@ -856,7 +899,6 @@ class AIReviewer:
             if trace:
                 self._record_langfuse_messages(messages, trace)
                 trace.update(output={"content": content})
-            flush()
             return SubAgentResult(
                 group_name=group_name,
                 batch_index=batch.batch_index,
@@ -939,11 +981,11 @@ class AIReviewer:
                 agent, skills_files = self._create_agent()
                 thread_id = f"review-{datetime.now(timezone.utc).timestamp()}"
 
-                # Langfuse trace for this invocation
-                trace = create_trace(
-                    name="pr-review-single",
+                # Langfuse span under the top-level PR trace
+                trace = create_span(
+                    self._lf_trace,
+                    name=f"single-agent-attempt{attempt + 1}",
                     metadata={"attempt": attempt + 1},
-                    tags=["single-agent"],
                 )
                 if trace:
                     trace.update(input={"prompt": prompt})
@@ -983,7 +1025,6 @@ class AIReviewer:
                 if trace:
                     self._record_langfuse_messages(messages, trace)
                     trace.update(output={"content": content})
-                flush()
                 return content
             except Exception as exc:  # noqa: BLE001
                 last_error = exc

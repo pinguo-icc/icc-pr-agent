@@ -93,6 +93,17 @@ def create_trace(
         return None
 
 
+def create_span(parent_trace, *, name: str, metadata: dict[str, Any] | None = None):
+    """Create a span under an existing trace. Returns None if parent is None."""
+    if parent_trace is None:
+        return None
+    try:
+        return parent_trace.span(name=name, metadata=metadata or {})
+    except Exception as exc:
+        logger.warning("Langfuse span 创建失败: %s", exc)
+        return None
+
+
 def flush() -> None:
     """Flush pending Langfuse events."""
     if _langfuse_client is None:

@@ -80,4 +80,18 @@
 
 ---
 
-<sub>🤖 此审查由 AI 自动生成，仅供参考，请结合实际情况判断。{% if token_usage %} | Token 消耗：输入 {{ token_usage.prompt_tokens }}，输出 {{ token_usage.completion_tokens }}，共计 {{ token_usage.total_tokens }}{% if token_usage_by_group %} | {% for g in token_usage_by_group %}{{ g.group_name }}: {{ "{:,}".format(g.total_tokens) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% endif %}{% if tools_used %} | 🔧 使用工具：{{ tools_used|join(', ') }}{% endif %}</sub>
+{% if token_usage or skills_loaded or tools_used %}
+<details>
+<summary>📈 审查详情</summary>
+
+| 项目 | 详情 |
+|------|------|
+{% if token_usage %}| Token 消耗 | 输入 {{ "{:,}".format(token_usage.prompt_tokens) }} · 输出 {{ "{:,}".format(token_usage.completion_tokens) }} · 共计 {{ "{:,}".format(token_usage.total_tokens) }} |
+{% endif %}{% if token_usage_by_group %}{% for g in token_usage_by_group %}| └ {{ g.group_name }} | {{ "{:,}".format(g.prompt_tokens) }} + {{ "{:,}".format(g.completion_tokens) }} = {{ "{:,}".format(g.total_tokens) }} |
+{% endfor %}{% endif %}{% if skills_loaded %}| 加载技能 | {{ skills_loaded|join(', ') }} |
+{% endif %}{% if tools_used %}| 使用工具 | {{ tools_used|join(', ') }} |
+{% endif %}
+</details>
+{% endif %}
+
+<sub>🤖 此审查由 AI 自动生成，仅供参考，请结合实际情况判断。</sub>
