@@ -255,7 +255,7 @@ class GitHubAdapter(PlatformAdapter):
             f"/issues/{self.pr_number}/comments"
         )
 
-        body = comment + _AI_COMMENT_IDENTIFIER
+        body = comment
 
         resp = self._request_with_status_retry(
             "POST",
