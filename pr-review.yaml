@@ -101,8 +101,8 @@ exclude:
 # ============================================================
 prompts:
   system_prompt: >
-    你是一位资深代码审查专家。请根据你掌握的技能，对代码变更进行专业审查，
-    严格按照 JSON 格式输出结果。
+    你是一位资深代码审查专家。请使用 code-review 技能对代码变更进行专业审查，
+    严格按照该技能定义的 JSON 格式输出结果。
 
   review_user_prompt: |
     请对以下 Pull Request 的代码变更进行审查。
@@ -113,29 +113,23 @@ prompts:
     - 源分支: {source_branch}
     - 目标分支: {target_branch}
 
-    ## 代码变更 (Diff)
+    ## 代码变更 (Unified Diff)
+
+    以下为 unified diff 格式：`+` 开头为新增行，`-` 开头为删除行，
+    其余为上下文。请重点关注新增和修改的代码。
+
     ```
     {diff}
     ```
 
-    请使用你认为合适的技能进行审查，严格按照以下 JSON 格式输出结果，不要包含其他内容：
-    {{
-      "summary": "审查总结（一段简短的总体评价）",
-      "issues": [
-        {{
-          "file_path": "文件路径",
-          "line_number": 行号或null,
-          "severity": "critical|warning|suggestion",
-          "category": "quality|bug|security|improvement",
-          "description": "问题描述",
-          "suggestion": "改进建议或null"
-        }}
-      ]
-    }}
+    请使用 code-review 技能进行审查，严格按照该技能定义的 JSON 格式输出结果，不要包含其他内容。
 
   summary_user_prompt: |
     以下是对一个 Pull Request 中多个文件分别审查后的结果摘要列表。
-    请将它们合并为一段简洁的总体审查总结（2-3 句话）。
+    请合并为一段简洁的总体审查总结（2-3 句话），需涵盖：
+    1. 整体风险等级（高/中/低）
+    2. 最关键的问题（如有）
+    3. 是否建议合并
 
     各文件审查摘要：
     {summaries}

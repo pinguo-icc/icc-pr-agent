@@ -40,6 +40,13 @@ class ResultMerger:
                     "Sub-agent failed: group=%s batch=%d error=%s",
                     sr.group_name, sr.batch_index, sr.error,
                 )
+            else:
+                # result is None but error is empty/falsy (e.g. TimeoutError)
+                failed_groups.append(f"{sr.group_name}(batch {sr.batch_index})")
+                logger.error(
+                    "Sub-agent failed with no result: group=%s batch=%d",
+                    sr.group_name, sr.batch_index,
+                )
 
         # Pipeline: deduplicate → sort → truncate
         deduped = self._deduplicate(all_issues)

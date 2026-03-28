@@ -438,7 +438,7 @@ class AIReviewer:
     def _review_single(self, pr_info: PRInfo, diff: str) -> ReviewResult:
         prompt = self._prompts["review_user_prompt"].format(
             title=pr_info.title,
-            description=pr_info.description,
+            description=pr_info.description or "无描述",
             source_branch=pr_info.source_branch,
             target_branch=pr_info.target_branch,
             diff=diff,
@@ -761,8 +761,13 @@ class AIReviewer:
             sub_system_prompt = (
                 f"你是负责审查 {group_name} 分组代码的专家子 Agent。\n"
                 f"你正在审查的文件属于 {group_name} 领域。\n"
-                f"请根据你掌握的技能，对代码变更进行专业审查，"
-                f"严格按照 JSON 格式输出结果。"
+                f"请使用 code-review 技能对代码变更进行专业审查，"
+                f"严格按照该技能定义的 JSON 格式输出结果。\n\n"
+                f"如果技能不可用，请从以下维度审查：\n"
+                f"1. 代码质量（quality）— 风格、可读性、可维护性\n"
+                f"2. 潜在缺陷（bug）— 逻辑错误、边界条件、资源泄漏\n"
+                f"3. 安全风险（security）— 注入、信息泄露、权限问题\n"
+                f"4. 改进建议（improvement）— 性能优化、更好的实现方式"
             )
 
             # Build tools for sub-agent
@@ -775,6 +780,7 @@ class AIReviewer:
             sub_agent = create_deep_agent(
                 model=model,
                 system_prompt=sub_system_prompt,
+                name=f"review-{group_name}",
                 skills=["/skills/"],
                 tools=tools,
                 checkpointer=MemorySaver(),
@@ -783,7 +789,7 @@ class AIReviewer:
             # Build review prompt
             prompt = self._prompts["review_user_prompt"].format(
                 title=pr_info.title,
-                description=pr_info.description,
+                description=pr_info.description or "无描述",
                 source_branch=pr_info.source_branch,
                 target_branch=pr_info.target_branch,
                 diff=batch.diff_content,
