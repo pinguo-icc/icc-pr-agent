@@ -701,7 +701,10 @@ class AIReviewer:
         return merged
 
     def _build_symbol_index(self, pr_info: PRInfo) -> SymbolIndex | None:
-        """Optionally build symbol index. Returns None on failure."""
+        """Optionally build symbol index. Returns None on failure or when disabled."""
+        if not self._config.symbol_index_enabled:
+            logger.info("符号索引已禁用 (symbol_index_enabled=false)，跳过构建")
+            return None
         try:
             indexer = SymbolIndexer(
                 cache_dir=self._config.review_storage_dir,

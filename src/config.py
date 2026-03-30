@@ -98,6 +98,9 @@ class Config:
     # Token budget (0 = unlimited)
     token_budget: int = 0
 
+    # Symbol index toggle (disable to skip AST scanning and lookup_symbol tool)
+    symbol_index_enabled: bool = True
+
     # Langfuse observability
     langfuse_enabled: bool = True
     langfuse_public_key: str = ""
@@ -218,6 +221,21 @@ class Config:
         else:
             token_budget = default_token_budget
 
+        # --- symbol_index_enabled: env > YAML > default(true) ---
+        env_symbol_index = os.environ.get("SYMBOL_INDEX_ENABLED")
+        if env_symbol_index is not None:
+            symbol_index_enabled = env_symbol_index.lower() in (
+                "true", "1", "yes",
+            )
+        elif "symbol_index_enabled" in yaml_cfg:
+            val = yaml_cfg["symbol_index_enabled"]
+            symbol_index_enabled = (
+                val is True
+                or (isinstance(val, str) and val.lower() in ("true", "1", "yes"))
+            )
+        else:
+            symbol_index_enabled = True
+
         return cls(
             langfuse_enabled=os.environ.get(
                 "LANGFUSE_ENABLED", "true"
@@ -252,4 +270,5 @@ class Config:
             max_concurrency=max_concurrency,
             review_timeout=review_timeout,
             token_budget=token_budget,
+            symbol_index_enabled=symbol_index_enabled,
         )
