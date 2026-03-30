@@ -828,15 +828,22 @@ class AIReviewer:
             return None
 
     def _resolve_repo_dir(self, pr_info: PRInfo) -> str | None:
-        """Resolve the persistent repo directory for source file access."""
+        """Resolve the persistent repo directory for source file access.
+
+        If the repo is not yet cloned, clone it (shallow, source branch).
+        If already cloned, fetch and reset to the PR's source branch.
+        This ensures source files are available even when symbol_index is disabled.
+        """
         repo_url = self._extract_repo_url(pr_info)
         if not repo_url:
             return None
-        indexer = SymbolIndexer(cache_dir=self._config.review_storage_dir)
-        repo_dir = indexer._repo_dir_path(repo_url)
-        if os.path.isdir(repo_dir):
+        try:
+            indexer = SymbolIndexer(cache_dir=self._config.review_storage_dir)
+            repo_dir = indexer._ensure_repo(repo_url, pr_info.source_branch)
             return repo_dir
-        return None
+        except Exception as exc:
+            logger.warning("仓库 clone/更新失败，源文件将不可用: %s", exc)
+            return None
 
     @staticmethod
     def _load_source_files(

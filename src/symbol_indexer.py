@@ -154,15 +154,16 @@ class SymbolIndexer:
         git_dir = os.path.join(repo_dir, ".git")
 
         if os.path.isdir(git_dir):
-            # Already cloned — fetch and reset to latest
+            # Already cloned — fetch target branch and reset
             logger.info("更新已有仓库: %s (branch=%s)", repo_dir, branch)
             try:
                 subprocess.run(
                     ["git", "fetch", "origin", branch, "--depth=1"],
                     cwd=repo_dir, check=True, capture_output=True, timeout=120,
                 )
+                # Use FETCH_HEAD — shallow fetch doesn't create origin/branch ref
                 subprocess.run(
-                    ["git", "reset", "--hard", f"origin/{branch}"],
+                    ["git", "checkout", "FETCH_HEAD", "--detach"],
                     cwd=repo_dir, check=True, capture_output=True, timeout=30,
                 )
                 subprocess.run(
