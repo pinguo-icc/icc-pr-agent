@@ -131,6 +131,7 @@ class ReviewOrchestrator:
             token_usage_by_group=self._ai_reviewer.token_usage_by_group or None,
             tools_used=self._ai_reviewer.tools_used or None,
             skills_loaded=self._ai_reviewer.skills_loaded or None,
+            model_name=self._config.llm_model,
         )
 
         # m. Save record

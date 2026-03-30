@@ -92,12 +92,13 @@
 
 ---
 
-{% if token_usage or skills_loaded or tools_used %}
+{% if token_usage or skills_loaded or tools_used or model_name %}
 ### 📈 审查详情
 
 | 项目 | 详情 |
 |------|------|
-{% if token_usage %}| Token 消耗 | 输入 {{ "{:,}".format(token_usage.prompt_tokens) }} · 输出 {{ "{:,}".format(token_usage.completion_tokens) }} · 共计 {{ "{:,}".format(token_usage.total_tokens) }} |
+{% if model_name %}| 模型 | {{ model_name }} |
+{% endif %}{% if token_usage %}| Token 消耗 | 输入 {{ "{:,}".format(token_usage.prompt_tokens) }} · 输出 {{ "{:,}".format(token_usage.completion_tokens) }} · 共计 {{ "{:,}".format(token_usage.total_tokens) }} |
 {% endif %}{% if token_usage_by_group %}{% for g in token_usage_by_group %}| └ {{ g.group_name }} | {{ "{:,}".format(g.prompt_tokens) }} + {{ "{:,}".format(g.completion_tokens) }} = {{ "{:,}".format(g.total_tokens) }} |
 {% endfor %}{% endif %}{% if skills_loaded %}| 加载技能 | {{ skills_loaded|join(', ') }} |
 {% endif %}{% if tools_used %}| 使用工具 | {{ tools_used|join(', ') }} |
