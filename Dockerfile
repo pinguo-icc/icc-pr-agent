@@ -3,11 +3,13 @@ WORKDIR /app
 ENV PIP_PROGRESS_BAR=off \
     PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     PIP_TRUSTED_HOST=mirrors.aliyun.com
-RUN ls
-RUN pip install --no-cache-dir pip>=24.2
+RUN pip install --no-cache-dir "pip>=24.2"
+
+# Copy source first so setuptools can discover packages
 COPY pyproject.toml .
-RUN pip install --no-cache-dir --prefix=/install .
 COPY src/ src/
+RUN pip install --no-cache-dir .
+
 COPY server.py pr.py pr-review.yaml ./
 COPY skills/ skills/
 COPY templates/ templates/
