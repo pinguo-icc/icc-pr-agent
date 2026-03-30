@@ -92,6 +92,10 @@ class CLIRunner:
                 parsed.pr_url, options
             )
 
+            if output.review_result.all_failed:
+                print("❌ 所有分组审查失败，请查看日志了解详情", file=sys.stderr)
+                return 1
+
             print("✅ 审查完成", flush=True)
             print(output.formatted_comment)
 

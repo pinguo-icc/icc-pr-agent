@@ -96,7 +96,10 @@ class TestCLIRun:
         self, mock_config_cls, mock_orch_cls, capsys
     ):
         mock_config_cls.from_env.return_value = MagicMock()
+        review_result = MagicMock(spec=ReviewResult)
+        review_result.all_failed = False
         output = MagicMock(spec=ReviewOutput)
+        output.review_result = review_result
         output.formatted_comment = "# Review OK"
         output.written_back = True
         mock_orch_cls.return_value.run.return_value = output
@@ -119,7 +122,10 @@ class TestCLIRun:
         self, mock_config_cls, mock_orch_cls, capsys
     ):
         mock_config_cls.from_env.return_value = MagicMock()
+        review_result = MagicMock(spec=ReviewResult)
+        review_result.all_failed = False
         output = MagicMock(spec=ReviewOutput)
+        output.review_result = review_result
         output.formatted_comment = "# Review"
         output.written_back = False
         mock_orch_cls.return_value.run.return_value = output
@@ -139,7 +145,10 @@ class TestCLIRun:
         self, mock_config_cls, mock_orch_cls
     ):
         mock_config_cls.from_env.return_value = MagicMock()
+        review_result = MagicMock(spec=ReviewResult)
+        review_result.all_failed = False
         output = MagicMock(spec=ReviewOutput)
+        output.review_result = review_result
         output.formatted_comment = ""
         output.written_back = False
         mock_orch_cls.return_value.run.return_value = output

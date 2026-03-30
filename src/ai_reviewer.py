@@ -911,6 +911,13 @@ class AIReviewer:
                 else str(last_msg)
             )
 
+            # Guard against empty LLM response
+            if not content or not content.strip():
+                raise AIModelError(
+                    f"Sub-agent 返回空内容 (messages={len(messages)}, "
+                    f"last_role={getattr(last_msg, 'type', 'unknown')})"
+                )
+
             # Track token usage
             prompt_tokens = 0
             completion_tokens = 0
@@ -1051,7 +1058,12 @@ class AIReviewer:
                     else str(last_msg)
                 )
 
-                # Track token usage from response metadata if available
+                # Guard against empty LLM response
+                if not content or not content.strip():
+                    raise AIModelError(
+                        f"DeepAgents 返回空内容 (messages={len(messages)}, "
+                        f"last_role={getattr(last_msg, 'type', 'unknown')})"
+                    )                # Track token usage from response metadata if available
                 usage = getattr(last_msg, "usage_metadata", None)
                 if usage:
                     self.total_prompt_tokens += usage.get("input_tokens", 0)

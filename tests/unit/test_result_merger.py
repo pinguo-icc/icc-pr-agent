@@ -103,14 +103,16 @@ class TestResultMergerDeduplication:
 
 class TestResultMergerFailureHandling:
     def test_partial_failure(self):
-        """Requirement 7.5: failed sub-agents noted in summary."""
+        """Requirement 7.5: failed sub-agents logged, not in summary."""
         merger = ResultMerger()
         result = merger.merge([
             _sr(issues=[_issue()]),
             _sr(group="frontend", error="Timeout after 300s"),
         ])
         assert len(result.issues) == 1
-        assert "frontend" in result.summary
+        # Failed group info should NOT appear in summary (only in logs)
+        assert "frontend" not in result.summary
+        assert result.all_failed is False
 
     def test_all_failed(self):
         merger = ResultMerger()
@@ -119,8 +121,8 @@ class TestResultMergerFailureHandling:
             _sr(group="frontend", error="API error"),
         ])
         assert result.issues == []
-        assert "backend" in result.summary
-        assert "frontend" in result.summary
+        assert result.all_failed is True
+        assert "失败" in result.summary
 
 
 class TestJaccardSimilarity:

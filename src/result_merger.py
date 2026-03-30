@@ -56,14 +56,21 @@ class ResultMerger:
         # Build summary
         summary_parts = summaries.copy()
         if failed_groups:
-            summary_parts.append(
-                f"以下分组审查失败: {', '.join(failed_groups)}"
+            logger.warning(
+                "审查失败的分组: %s", ", ".join(failed_groups),
             )
-        summary = "\n\n".join(summary_parts) if summary_parts else "审查完成，未发现问题。"
+        summary = "\n\n".join(summary_parts) if summary_parts else ""
 
         # Detect total failure: every sub-agent failed (no successful results)
         total_count = len(sub_results)
         all_failed = total_count > 0 and len(failed_groups) == total_count
+
+        # Only set a default summary when there's truly nothing to report
+        if not summary:
+            if all_failed:
+                summary = "所有分组审查失败，请查看日志了解详情。"
+            else:
+                summary = "审查完成，未发现问题。"
 
         return ReviewResult(
             summary=summary,
