@@ -943,6 +943,14 @@ class AIReviewer:
             raise
         except Exception as exc:
             elapsed = time.monotonic() - start_time
+            # Capture raw LLM content for debugging JSON parse failures
+            raw_content = locals().get("content", None)
+            error_detail = str(exc)
+            if raw_content and "JSON 解析失败" in error_detail:
+                error_detail = (
+                    f"{error_detail}\n--- raw_response ({len(raw_content)} chars) ---\n"
+                    f"{raw_content}"
+                )
             logger.error(
                 "Sub-agent 审查异常: group=%s batch=%d error=%s",
                 group_name, batch.batch_index, exc,
@@ -951,7 +959,7 @@ class AIReviewer:
                 group_name=group_name,
                 batch_index=batch.batch_index,
                 result=None,
-                error=str(exc),
+                error=error_detail,
                 elapsed_seconds=elapsed,
             )
 
@@ -1090,6 +1098,10 @@ class AIReviewer:
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
+            logger.error(
+                "AI 返回的 JSON 解析失败，原始内容 (%d chars):\n%s",
+                len(raw), raw,
+            )
             raise AIModelError(
                 f"AI 返回的 JSON 解析失败: {exc}"
             ) from exc
