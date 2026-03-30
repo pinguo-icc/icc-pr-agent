@@ -1,4 +1,4 @@
-FROM http://mirror.camera360.com/base/python:3.11-slim
+FROM mirror.camera360.com/base/python:3.11-slim
 
 WORKDIR /app
 
