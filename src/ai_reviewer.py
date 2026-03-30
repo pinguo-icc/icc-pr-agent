@@ -168,6 +168,13 @@ class AIReviewer:
         self._traces: list[dict] = []
         # Langfuse top-level trace (set in review())
         self._lf_trace = None
+        # Track which model actually produced the final result
+        self._actual_model: str = config.llm_model
+
+    @property
+    def actual_model(self) -> str:
+        """The model that produced the final review result (may be fallback)."""
+        return self._actual_model
 
     @property
     def token_usage_by_group(self) -> list[TokenUsageByGroup]:
@@ -242,6 +249,59 @@ class AIReviewer:
                 entry["usage_metadata"] = dict(usage)
             trace["messages"].append(entry)
         self._traces.append(trace)
+
+    @staticmethod
+    def _format_messages_dump(messages: list) -> str:
+        """Format a message chain into a readable debug string."""
+        lines = []
+        for i, msg in enumerate(messages):
+            role = getattr(msg, "type", "unknown")
+            content = getattr(msg, "content", None)
+            content_str = str(content) if content else ""
+            tc = getattr(msg, "tool_calls", None)
+            tc_count = len(tc) if tc else 0
+
+            # Truncate content for readability
+            preview = content_str[:1000]
+            if len(content_str) > 1000:
+                preview += f"... ({len(content_str)} chars total)"
+
+            line = f"  [{i}] {role} | len={len(content_str)} | tool_calls={tc_count}"
+            if tc:
+                tc_names = ", ".join(t.get("name", "?") for t in tc)
+                line += f" | tools=[{tc_names}]"
+            line += f"\n      content: {preview}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_ai_content(messages: list) -> str | None:
+        """Extract content from the last AI message in the chain.
+
+        Only looks at the final ``ai`` message. If the content is a list
+        (multimodal format), it is joined into a single string.
+
+        Returns the content string, or None if empty / not found.
+        """
+        # Find the last ai message
+        for msg in reversed(messages):
+            role = getattr(msg, "type", "unknown")
+            if role != "ai":
+                continue
+            content = getattr(msg, "content", None)
+            if content is None:
+                return None
+            # Handle list-type content (multimodal messages)
+            if isinstance(content, list):
+                content = "\n".join(
+                    item.get("text", str(item))
+                    if isinstance(item, dict) else str(item)
+                    for item in content
+                )
+            if isinstance(content, str) and content.strip():
+                return content
+            return None  # Last ai message found but empty → fail
+        return None
 
     def _record_langfuse_messages(self, messages: list, lf_trace) -> None:
         """[DEPRECATED] Post-hoc message chain replay to Langfuse.
@@ -373,9 +433,31 @@ class AIReviewer:
             model_kwargs["base_url"] = self._config.llm_base_url
         return init_chat_model(self._build_model_string(), **model_kwargs)
 
-    def _create_agent(self):
-        """Create a fresh DeepAgents agent instance."""
-        model = self._create_model()
+    def _create_fallback_model(self):
+        """Create a fallback LangChain chat model, or None if not configured."""
+        if not self._config.fallback_llm_model:
+            return None
+        model_str = self._config.fallback_llm_model
+        if ":" not in model_str:
+            model_str = f"openai:{model_str}"
+        model_kwargs = {}
+        api_key = self._config.fallback_llm_api_key or self._config.llm_api_key
+        if api_key:
+            model_kwargs["api_key"] = api_key
+        base_url = self._config.fallback_llm_base_url or self._config.llm_base_url
+        if base_url:
+            model_kwargs["base_url"] = base_url
+        return init_chat_model(model_str, **model_kwargs)
+
+    def _create_agent(self, *, use_fallback: bool = False):
+        """Create a fresh DeepAgents agent instance.
+
+        Args:
+            use_fallback: If True, use the fallback LLM model.
+        """
+        model = self._create_fallback_model() if use_fallback else self._create_model()
+        if model is None:
+            raise AIModelError("Fallback 模型未配置")
         skills_files = self._load_skills_files()
 
         agent = create_deep_agent(
@@ -491,8 +573,19 @@ class AIReviewer:
             target_branch=pr_info.target_branch,
             diff=diff,
         )
-        raw = self._call_agent_with_retry(prompt)
-        return self._parse_response(raw)
+        try:
+            raw = self._call_agent_with_retry(prompt)
+            return self._parse_response(raw)
+        except Exception as primary_err:
+            if not self._config.fallback_llm_model:
+                raise
+            logger.warning(
+                "主模型失败，尝试 fallback 模型 (%s): %s",
+                self._config.fallback_llm_model, primary_err,
+            )
+            self._actual_model = self._config.fallback_llm_model
+            raw = self._call_agent_with_retry(prompt, use_fallback=True)
+            return self._parse_response(raw)
 
     # ------------------------------------------------------------------
     # Chunked review (large diff, no file_groups) — legacy fast path
@@ -759,8 +852,8 @@ class AIReviewer:
                 continue
             try:
                 content = open(full_path, encoding="utf-8").read()
-                # Use the repo-relative path as the virtual path
-                virtual_path = f"/{rel_path}"
+                # Use /workspace/ prefix to match DeepAgents SDK read_file path resolution
+                virtual_path = f"/workspace/{rel_path}"
                 source_files[virtual_path] = create_file_data(content)
             except Exception as exc:
                 logger.warning("无法读取源文件 %s: %s", full_path, exc)
@@ -914,25 +1007,46 @@ class AIReviewer:
             # Dump full message chain for token analysis
             self._dump_messages(messages, group_name, batch.batch_index)
 
-            last_msg = messages[-1]
-            content = (
-                last_msg.content
-                if hasattr(last_msg, "content")
-                else str(last_msg)
-            )
-
-            # Guard against empty LLM response
-            if not content or not content.strip():
-                raise AIModelError(
-                    f"Sub-agent 返回空内容 (messages={len(messages)}, "
-                    f"last_role={getattr(last_msg, 'type', 'unknown')})"
+            # Debug: log all messages for diagnosing empty responses
+            for i, msg in enumerate(messages):
+                role = getattr(msg, "type", "unknown")
+                raw_content = getattr(msg, "content", None)
+                tc = getattr(msg, "tool_calls", None)
+                logger.info(
+                    "Sub-agent msg[%d] role=%s content_type=%s "
+                    "content_len=%s tool_calls=%d content_repr=%.500s",
+                    i, role, type(raw_content).__name__,
+                    len(str(raw_content)) if raw_content else 0,
+                    len(tc) if tc else 0,
+                    repr(raw_content),
                 )
 
-            # Track token usage
+            # Extract best AI content (scan backwards for non-empty ai message)
+            content = self._extract_ai_content(messages)
+
+            # Guard against empty LLM response
+            if not content:
+                tool_call_count = sum(
+                    len(getattr(m, "tool_calls", None) or [])
+                    for m in messages
+                )
+                last_msg = messages[-1]
+                # Dump full message chain for debugging
+                logger.error(
+                    "Sub-agent 返回空内容，完整消息链 dump:\n%s",
+                    self._format_messages_dump(messages),
+                )
+                raise AIModelError(
+                    f"Sub-agent 返回空内容 (messages={len(messages)}, "
+                    f"last_role={getattr(last_msg, 'type', 'unknown')}, "
+                    f"tool_calls_total={tool_call_count})"
+                )
+
+            # Track token usage (from the last message in the chain)
             prompt_tokens = 0
             completion_tokens = 0
             total_tokens_val = 0
-            usage = getattr(last_msg, "usage_metadata", None)
+            usage = getattr(messages[-1], "usage_metadata", None)
             if usage:
                 prompt_tokens = usage.get("input_tokens", 0)
                 completion_tokens = usage.get("output_tokens", 0)
@@ -958,8 +1072,44 @@ class AIReviewer:
         except SubAgentTimeoutError:
             raise
         except Exception as exc:
+            # ---- Fallback: 主模型失败，尝试备用模型 ----
+            if self._config.fallback_llm_model:
+                logger.warning(
+                    "Sub-agent 主模型失败，尝试 fallback (%s): "
+                    "group=%s batch=%d error=%s",
+                    self._config.fallback_llm_model,
+                    group_name, batch.batch_index, exc,
+                )
+                try:
+                    self._actual_model = self._config.fallback_llm_model
+                    content, fb_prompt_tokens, fb_completion_tokens, fb_total_tokens = (
+                        self._invoke_subagent_fallback(
+                            sub_system_prompt, prompt, all_files, tools,
+                            group_name, batch, trace,
+                        )
+                    )
+                    review_result = self._parse_response(content)
+                    elapsed = time.monotonic() - start_time
+                    if trace:
+                        trace.update(output={"content": content})
+                    return SubAgentResult(
+                        group_name=group_name,
+                        batch_index=batch.batch_index,
+                        result=review_result,
+                        error=None,
+                        prompt_tokens=fb_prompt_tokens,
+                        completion_tokens=fb_completion_tokens,
+                        total_tokens=fb_total_tokens,
+                        elapsed_seconds=elapsed,
+                    )
+                except Exception as fallback_exc:
+                    logger.error(
+                        "Fallback 模型也失败: group=%s batch=%d error=%s",
+                        group_name, batch.batch_index, fallback_exc,
+                    )
+                    # Fall through to return error result below
+
             elapsed = time.monotonic() - start_time
-            # Capture raw LLM content for debugging JSON parse failures
             raw_content = locals().get("content", None)
             error_detail = str(exc)
             if raw_content and "JSON 解析失败" in error_detail:
@@ -978,6 +1128,99 @@ class AIReviewer:
                 error=error_detail,
                 elapsed_seconds=elapsed,
             )
+
+    # ------------------------------------------------------------------
+    # Sub-agent fallback invocation
+    # ------------------------------------------------------------------
+
+    def _invoke_subagent_fallback(
+        self,
+        system_prompt: str,
+        prompt: str,
+        all_files: dict,
+        tools: list,
+        group_name: str,
+        batch: Batch,
+        parent_trace,
+    ) -> tuple[str, int, int, int]:
+        """Re-invoke a sub-agent with the fallback model.
+
+        Returns:
+            (content, prompt_tokens, completion_tokens, total_tokens)
+        """
+        fallback_model = self._create_fallback_model()
+        if fallback_model is None:
+            raise AIModelError("Fallback 模型未配置")
+
+        sub_agent = create_deep_agent(
+            model=fallback_model,
+            system_prompt=system_prompt,
+            name=f"fallback-{group_name}",
+            skills=["/skills/"],
+            tools=tools,
+            checkpointer=MemorySaver(),
+        )
+
+        thread_id = (
+            f"fallback-{group_name}-{batch.batch_index}-"
+            f"{datetime.now(timezone.utc).timestamp()}"
+        )
+
+        trace = create_span(
+            parent_trace or self._lf_trace,
+            name=f"fallback-{group_name}-batch{batch.batch_index}",
+            metadata={
+                "group_name": group_name,
+                "batch_index": batch.batch_index,
+                "is_fallback": True,
+                "model": self._config.fallback_llm_model,
+            },
+        )
+        if trace:
+            trace.update(input={"prompt": prompt})
+
+        result = sub_agent.invoke(
+            {
+                "messages": [{"role": "user", "content": prompt}],
+                "files": all_files,
+            },
+            config={
+                "configurable": {"thread_id": thread_id},
+                "callbacks": [
+                    LangfuseCallbackHandler(
+                        trace,
+                        model_name=self._config.fallback_llm_model,
+                    ),
+                ] if trace else [],
+            },
+        )
+
+        messages = result.get("messages", [])
+        if not messages:
+            raise AIModelError("Fallback sub-agent 返回空消息")
+
+        self._dump_messages(messages, f"fallback-{group_name}", batch.batch_index)
+
+        last_msg = messages[-1]
+        content = (
+            last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+        )
+        if not content or not content.strip():
+            raise AIModelError("Fallback sub-agent 返回空内容")
+
+        # Extract token usage
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        usage = getattr(last_msg, "usage_metadata", None)
+        if usage:
+            prompt_tokens = usage.get("input_tokens", 0)
+            completion_tokens = usage.get("output_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+
+        if trace:
+            trace.update(output={"content": content})
+        return content, prompt_tokens, completion_tokens, total_tokens
 
     # ------------------------------------------------------------------
     # lookup_symbol tool builder (Task 11.4)
@@ -1023,22 +1266,44 @@ class AIReviewer:
     # DeepAgents invocation with retry
     # ------------------------------------------------------------------
 
-    def _call_agent_with_retry(self, prompt: str) -> str:
-        """Invoke the DeepAgents agent with up to 3 retries."""
+    def _call_agent_with_retry(self, prompt: str, *, use_fallback: bool = False) -> str:
+        """Invoke the DeepAgents agent with up to 3 retries.
+
+        Args:
+            prompt: The user prompt to send.
+            use_fallback: If True, use the fallback LLM model instead of primary.
+        """
         last_error: Exception | None = None
+        model_label = (
+            f"fallback({self._config.fallback_llm_model})"
+            if use_fallback else self._config.llm_model
+        )
         for attempt in range(_MAX_RETRIES):
             try:
                 logger.info(
-                    "调用 DeepAgents (尝试 %d/%d)", attempt + 1, _MAX_RETRIES
+                    "调用 DeepAgents [%s] (尝试 %d/%d)",
+                    model_label, attempt + 1, _MAX_RETRIES,
                 )
-                agent, skills_files = self._create_agent()
+                if use_fallback:
+                    agent, skills_files = self._create_agent(use_fallback=True)
+                else:
+                    agent, skills_files = self._create_agent()
                 thread_id = f"review-{datetime.now(timezone.utc).timestamp()}"
 
                 # Langfuse span under the top-level PR trace
+                span_name = (
+                    f"fallback-attempt{attempt + 1}"
+                    if use_fallback
+                    else f"single-agent-attempt{attempt + 1}"
+                )
                 trace = create_span(
                     self._lf_trace,
-                    name=f"single-agent-attempt{attempt + 1}",
-                    metadata={"attempt": attempt + 1},
+                    name=span_name,
+                    metadata={
+                        "attempt": attempt + 1,
+                        "model": model_label,
+                        "is_fallback": use_fallback,
+                    },
                 )
                 if trace:
                     trace.update(input={"prompt": prompt})
@@ -1052,7 +1317,11 @@ class AIReviewer:
                         "configurable": {"thread_id": thread_id},
                         "callbacks": [
                             LangfuseCallbackHandler(
-                                trace, model_name=self._config.llm_model,
+                                trace, model_name=(
+                                    self._config.fallback_llm_model
+                                    if use_fallback
+                                    else self._config.llm_model
+                                ),
                             ),
                         ] if trace else [],
                     },
@@ -1065,20 +1334,36 @@ class AIReviewer:
                 # Dump full message chain for token analysis
                 self._dump_messages(messages, "single", 0)
 
-                last_msg = messages[-1]
-                content = (
-                    last_msg.content
-                    if hasattr(last_msg, "content")
-                    else str(last_msg)
-                )
+                # Debug: log all messages for diagnosing empty responses
+                for i, msg in enumerate(messages):
+                    role = getattr(msg, "type", "unknown")
+                    raw_content = getattr(msg, "content", None)
+                    tc = getattr(msg, "tool_calls", None)
+                    logger.info(
+                        "Agent msg[%d] role=%s content_type=%s "
+                        "content_len=%s tool_calls=%d content_repr=%.500s",
+                        i, role, type(raw_content).__name__,
+                        len(str(raw_content)) if raw_content else 0,
+                        len(tc) if tc else 0,
+                        repr(raw_content),
+                    )
+
+                # Extract best AI content (scan backwards for non-empty ai message)
+                content = self._extract_ai_content(messages)
 
                 # Guard against empty LLM response
-                if not content or not content.strip():
+                if not content:
+                    last_msg = messages[-1]
+                    logger.error(
+                        "Agent 返回空内容，完整消息链 dump:\n%s",
+                        self._format_messages_dump(messages),
+                    )
                     raise AIModelError(
                         f"DeepAgents 返回空内容 (messages={len(messages)}, "
                         f"last_role={getattr(last_msg, 'type', 'unknown')})"
-                    )                # Track token usage from response metadata if available
-                usage = getattr(last_msg, "usage_metadata", None)
+                    )
+                # Track token usage from response metadata if available
+                usage = getattr(messages[-1], "usage_metadata", None)
                 if usage:
                     self.total_prompt_tokens += usage.get("input_tokens", 0)
                     self.total_completion_tokens += usage.get("output_tokens", 0)

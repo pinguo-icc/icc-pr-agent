@@ -93,6 +93,16 @@ class LangfuseCallbackHandler(BaseCallbackHandler):
                 },
             )
             self._generations[str(run_id)] = (gen, time.monotonic())
+
+            # Log LLM input summary for debugging
+            total_prompt_chars = sum(len(p) for p in prompts) if prompts else 0
+            logger.info(
+                "LLM 第%d轮开始: model=%s prompt_count=%d total_chars=%d",
+                self._llm_turn,
+                invocation_params.get("model", self._model_name),
+                len(prompts) if prompts else 0,
+                total_prompt_chars,
+            )
         except Exception as exc:
             logger.debug("Langfuse on_llm_start 记录失败: %s", exc)
 
@@ -167,6 +177,16 @@ class LangfuseCallbackHandler(BaseCallbackHandler):
             gen.end(
                 output=output_data,
                 usage=usage if usage else None,
+            )
+
+            # Log LLM response summary
+            response_len = len(output_data.get("response", ""))
+            tc_count = len(output_data.get("tool_calls", []))
+            logger.info(
+                "LLM 第%d轮结束: response_len=%d tool_calls=%d "
+                "tokens=%s elapsed=%.0fms",
+                self._llm_turn, response_len, tc_count,
+                usage if usage else "N/A", elapsed_ms,
             )
         except Exception as exc:
             logger.debug("Langfuse on_llm_end 记录失败: %s", exc)

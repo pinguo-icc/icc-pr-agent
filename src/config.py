@@ -77,6 +77,11 @@ class Config:
     llm_model: str = "gpt-4"
     llm_base_url: str = ""
 
+    # Fallback LLM (used when primary model response fails to parse)
+    fallback_llm_api_key: str = ""
+    fallback_llm_model: str = ""
+    fallback_llm_base_url: str = ""
+
     # General settings
     log_level: str = "INFO"
     review_storage_dir: str = ".pr_reviews"
@@ -253,6 +258,9 @@ class Config:
             llm_api_key=os.environ.get("LLM_API_KEY", ""),
             llm_model=os.environ.get("LLM_MODEL", "gpt-4"),
             llm_base_url=os.environ.get("LLM_BASE_URL", ""),
+            fallback_llm_api_key=os.environ.get("FALLBACK_LLM_API_KEY", ""),
+            fallback_llm_model=os.environ.get("FALLBACK_LLM_MODEL", ""),
+            fallback_llm_base_url=os.environ.get("FALLBACK_LLM_BASE_URL", ""),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
             review_storage_dir=os.environ.get(
                 "REVIEW_STORAGE_DIR", ".pr_reviews"
