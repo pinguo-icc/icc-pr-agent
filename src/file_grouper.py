@@ -15,14 +15,17 @@ class FileGrouper:
     """按关联域对 diff 文件进行分组。"""
 
     DEFAULT_FILE_GROUPS: dict[str, list[str]] = {
-        "backend": ["*.go", "*.proto"],
+        "golang": ["*.go", "*.proto", "go.mod", "go.sum"],
         "frontend": [
             "*.ts", "*.tsx", "*.js", "*.jsx", "*.vue",
             "*.css", "*.less", "*.scss",
         ],
-        "infra": ["Dockerfile*", "Makefile", "*.yml"],
+        "infra": ["Dockerfile*", "Makefile"],
         "default": ["*"],
     }
+
+    # 附属配置文件：不独立分组，自动跟随主语言组
+    _CONFIG_PATTERNS: list[str] = ["*.yaml", "*.yml", "*.toml", "*.json"]
 
     _DIFF_HEADER_RE = re.compile(r"^diff --git a/.+ b/(.+)$")
 
@@ -30,7 +33,11 @@ class FileGrouper:
         self._file_groups = file_groups if file_groups is not None else self.DEFAULT_FILE_GROUPS
 
     def group(self, diff: str) -> dict[str, FileGroup]:
-        """将 unified diff 按文件分组。返回 {group_name: FileGroup}，跳过空组。"""
+        """将 unified diff 按文件分组。返回 {group_name: FileGroup}，跳过空组。
+
+        附属配置文件（yaml/yml/toml/json）不独立分组，
+        自动归入主语言组（文件数最多的非 default/infra 组）。
+        """
         # Split diff into per-file sections
         file_diffs: dict[str, str] = {}
         current_path: str | None = None
@@ -52,11 +59,28 @@ class FileGrouper:
         if current_path is not None:
             file_diffs[current_path] = "".join(current_lines)
 
-        # Assign files to groups
-        groups: dict[str, list[tuple[str, str]]] = {}  # group_name -> [(path, diff)]
+        # First pass: separate config files from regular files
+        config_files: list[tuple[str, str]] = []  # [(path, diff)]
+        regular_files: list[tuple[str, str]] = []
         for path, fdiff in file_diffs.items():
+            if self._is_config_file(path):
+                config_files.append((path, fdiff))
+            else:
+                regular_files.append((path, fdiff))
+
+        # Assign regular files to groups
+        groups: dict[str, list[tuple[str, str]]] = {}
+        for path, fdiff in regular_files:
             gname = self._match_group(path, self._file_groups)
             groups.setdefault(gname, []).append((path, fdiff))
+
+        # Find primary language group (most files, excluding default/infra)
+        primary_group = self._find_primary_group(groups)
+
+        # Merge config files into primary group (or default if no primary)
+        if config_files:
+            target = primary_group or "default"
+            groups.setdefault(target, []).extend(config_files)
 
         # Build FileGroup objects, skip empty
         result: dict[str, FileGroup] = {}
@@ -67,6 +91,24 @@ class FileGrouper:
             result[gname] = FileGroup(name=gname, file_paths=paths, file_diffs=diffs, total_chars=total)
 
         return result
+
+    @classmethod
+    def _is_config_file(cls, file_path: str) -> bool:
+        """判断文件是否为附属配置文件。"""
+        basename = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+        return any(fnmatch.fnmatch(basename, p) for p in cls._CONFIG_PATTERNS)
+
+    @staticmethod
+    def _find_primary_group(groups: dict[str, list]) -> str | None:
+        """找到主语言组：文件数最多的非 default/infra 组。"""
+        candidates = {
+            name: len(items)
+            for name, items in groups.items()
+            if name not in ("default", "infra")
+        }
+        if not candidates:
+            return None
+        return max(candidates, key=candidates.get)
 
     @staticmethod
     def _extract_file_path(diff_header_line: str) -> str | None:

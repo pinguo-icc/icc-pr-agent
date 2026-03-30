@@ -40,7 +40,7 @@ class TestMatchGroup:
 
     def test_default_groups_match_go(self):
         """Requirement 1.4: default groups."""
-        assert FileGrouper._match_group("main.go", FileGrouper.DEFAULT_FILE_GROUPS) == "backend"
+        assert FileGrouper._match_group("main.go", FileGrouper.DEFAULT_FILE_GROUPS) == "golang"
 
     def test_default_groups_match_ts(self):
         assert FileGrouper._match_group("app.tsx", FileGrouper.DEFAULT_FILE_GROUPS) == "frontend"
@@ -49,7 +49,9 @@ class TestMatchGroup:
         assert FileGrouper._match_group("Dockerfile", FileGrouper.DEFAULT_FILE_GROUPS) == "infra"
 
     def test_default_groups_match_yml(self):
-        assert FileGrouper._match_group("ci.yml", FileGrouper.DEFAULT_FILE_GROUPS) == "infra"
+        """yml is a config file, not matched by _match_group directly."""
+        # yml/yaml are config files handled by auto-follow logic, not in any group pattern
+        assert FileGrouper._match_group("ci.yml", FileGrouper.DEFAULT_FILE_GROUPS) == "default"
 
     def test_default_groups_catch_all(self):
         assert FileGrouper._match_group("random.txt", FileGrouper.DEFAULT_FILE_GROUPS) == "default"
@@ -65,8 +67,8 @@ class TestGroupMethod:
         diff = _make_diff(("src/main.go", "@@ -1 +1 @@\n-old\n+new"))
         fg = FileGrouper()
         result = fg.group(diff)
-        assert "backend" in result
-        assert result["backend"].file_paths == ["src/main.go"]
+        assert "golang" in result
+        assert result["golang"].file_paths == ["src/main.go"]
 
     def test_multiple_groups(self):
         diff = _make_diff(
@@ -75,9 +77,9 @@ class TestGroupMethod:
         )
         fg = FileGrouper()
         result = fg.group(diff)
-        assert "backend" in result
+        assert "golang" in result
         assert "frontend" in result
-        assert result["backend"].file_paths == ["src/main.go"]
+        assert result["golang"].file_paths == ["src/main.go"]
         assert result["frontend"].file_paths == ["app.tsx"]
 
     def test_custom_file_groups(self):
@@ -96,7 +98,7 @@ class TestGroupMethod:
         diff = _make_diff(("a.go", body))
         fg = FileGrouper()
         result = fg.group(diff)
-        assert result["backend"].total_chars > 0
+        assert result["golang"].total_chars > 0
 
     def test_invalid_glob_skipped(self, caplog):
         """Requirement 2.2: invalid glob patterns logged and skipped."""
@@ -108,3 +110,51 @@ class TestGroupMethod:
         result = fg.group(diff)
         # Should fall through to default since pattern won't match
         assert "default" in result or "special" in result
+
+
+class TestConfigFileAutoFollow:
+    """Config files (yaml/yml/toml/json) auto-follow the primary language group."""
+
+    def test_yaml_follows_golang(self):
+        diff = _make_diff(
+            ("src/main.go", "@@ -1 +1 @@\n-a\n+b"),
+            ("configs/config.yaml", "@@ -1 +1 @@\n-x\n+y"),
+        )
+        fg = FileGrouper()
+        result = fg.group(diff)
+        assert "golang" in result
+        assert "configs/config.yaml" in result["golang"].file_paths
+
+    def test_yaml_follows_frontend(self):
+        diff = _make_diff(
+            ("app.tsx", "@@ -1 +1 @@\n-a\n+b"),
+            ("tsconfig.json", "@@ -1 +1 @@\n-x\n+y"),
+        )
+        fg = FileGrouper()
+        result = fg.group(diff)
+        assert "frontend" in result
+        assert "tsconfig.json" in result["frontend"].file_paths
+
+    def test_yaml_only_goes_to_default(self):
+        """When no primary language group exists, config files go to default."""
+        diff = _make_diff(
+            ("config.yaml", "@@ -1 +1 @@\n-a\n+b"),
+        )
+        fg = FileGrouper()
+        result = fg.group(diff)
+        assert "default" in result
+        assert "config.yaml" in result["default"].file_paths
+
+    def test_multiple_config_files_follow_primary(self):
+        diff = _make_diff(
+            ("src/main.go", "@@ -1 +1 @@\n-a\n+b"),
+            ("api/user.proto", "@@ -1 +1 @@\n-c\n+d"),
+            ("configs/dev.yaml", "@@ -1 +1 @@\n-x\n+y"),
+            ("configs/prod.yml", "@@ -1 +1 @@\n-m\n+n"),
+        )
+        fg = FileGrouper()
+        result = fg.group(diff)
+        assert "golang" in result
+        golang_paths = result["golang"].file_paths
+        assert "configs/dev.yaml" in golang_paths
+        assert "configs/prod.yml" in golang_paths

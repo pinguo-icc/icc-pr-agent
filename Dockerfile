@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS builder
+FROM http://mirror.camera360.com/base/python:3.11-slim
 
 WORKDIR /app
 
@@ -10,11 +10,6 @@ RUN pip install --no-cache-dir pip>=24.2
 
 COPY pyproject.toml .
 RUN pip install --no-cache-dir --prefix=/install .
-
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY --from=builder /install /usr/local
 
 COPY src/ src/
 COPY server.py pr.py pr-review.yaml ./

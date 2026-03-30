@@ -144,13 +144,12 @@ prompts:
 # 支持 glob 语法：*（匹配文件名中任意字符）、**（匹配任意层级目录）、?（匹配单个字符）
 # ============================================================
 file_groups:
-  # 后端服务代码（Go + Proto + 配置 YAML）
-  backend:
+  # Go 服务代码（Go + Proto）
+  golang:
     - "*.go"
     - "*.proto"
-    - "configs/**"
-    - "*.yaml"
-    - "*.yml"
+    - "go.mod"
+    - "go.sum"
   # 前端代码（TypeScript/JavaScript + 样式）
   frontend:
     - "*.ts"
