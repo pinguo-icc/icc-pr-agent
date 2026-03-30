@@ -41,6 +41,7 @@ from src.models import (
 )
 from src.result_merger import ResultMerger
 from src.symbol_indexer import SymbolIndex, SymbolIndexer
+from src.langfuse_callback import LangfuseCallbackHandler
 from src.langfuse_integration import create_trace, create_span, flush
 
 logger = get_logger(__name__)
@@ -243,7 +244,11 @@ class AIReviewer:
         self._traces.append(trace)
 
     def _record_langfuse_messages(self, messages: list, lf_trace) -> None:
-        """Record each message in the chain as Langfuse spans/generations.
+        """[DEPRECATED] Post-hoc message chain replay to Langfuse.
+
+        Replaced by ``LangfuseCallbackHandler`` which records in real-time
+        via LangChain callbacks. Kept temporarily for reference; safe to
+        delete once the callback approach is validated in production.
 
         Produces a readable trace tree:
         - 📝 用户提问 → span
@@ -873,6 +878,11 @@ class AIReviewer:
                         },
                         config={
                             "configurable": {"thread_id": thread_id},
+                            "callbacks": [
+                                LangfuseCallbackHandler(
+                                    trace, model_name=self._config.llm_model,
+                                ),
+                            ] if trace else [],
                         },
                     )
                     last_invoke_error = None
@@ -931,9 +941,8 @@ class AIReviewer:
             elapsed = time.monotonic() - start_time
             review_result = self._parse_response(content)
 
-            # End Langfuse: record each message as span/generation
+            # End Langfuse: callback handler already recorded real-time
             if trace:
-                self._record_langfuse_messages(messages, trace)
                 trace.update(output={"content": content})
             return SubAgentResult(
                 group_name=group_name,
@@ -1041,6 +1050,11 @@ class AIReviewer:
                     },
                     config={
                         "configurable": {"thread_id": thread_id},
+                        "callbacks": [
+                            LangfuseCallbackHandler(
+                                trace, model_name=self._config.llm_model,
+                            ),
+                        ] if trace else [],
                     },
                 )
                 # Extract the final assistant message
@@ -1070,9 +1084,8 @@ class AIReviewer:
                     self.total_completion_tokens += usage.get("output_tokens", 0)
                     self.total_tokens += usage.get("total_tokens", 0)
 
-                # End Langfuse generation with token usage
+                # End Langfuse: callback handler already recorded real-time
                 if trace:
-                    self._record_langfuse_messages(messages, trace)
                     trace.update(output={"content": content})
                 return content
             except Exception as exc:  # noqa: BLE001
