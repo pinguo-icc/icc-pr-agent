@@ -61,10 +61,15 @@ class ResultMerger:
             )
         summary = "\n\n".join(summary_parts) if summary_parts else "审查完成，未发现问题。"
 
+        # Detect total failure: every sub-agent failed (no successful results)
+        total_count = len(sub_results)
+        all_failed = total_count > 0 and len(failed_groups) == total_count
+
         return ReviewResult(
             summary=summary,
             issues=truncated,
             reviewed_at=datetime.now(timezone.utc).isoformat(),
+            all_failed=all_failed,
         )
 
     @staticmethod

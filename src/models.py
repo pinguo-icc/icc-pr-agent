@@ -32,6 +32,7 @@ class ReviewIssue:
     description: str
     suggestion: str | None
     example: str | None = None
+    old_code: str | None = None  # 原始有问题的代码片段
 
 
 @dataclass
@@ -41,6 +42,7 @@ class ReviewResult:
     summary: str
     issues: list[ReviewIssue]
     reviewed_at: str  # ISO 8601 timestamp
+    all_failed: bool = False  # True when every sub-agent/batch failed
 
 
 @dataclass
@@ -80,6 +82,8 @@ class ReviewRecord:
                 "category": issue.category,
                 "description": issue.description,
                 "suggestion": issue.suggestion,
+                "example": issue.example,
+                "old_code": issue.old_code,
             }
             for issue in self.review_result.issues
         ]
@@ -136,6 +140,8 @@ class ReviewRecord:
                 category=i["category"],
                 description=i["description"],
                 suggestion=i["suggestion"],
+                example=i.get("example"),
+                old_code=i.get("old_code"),
             )
             for i in result_data["issues"]
         ]

@@ -38,7 +38,23 @@
 > 💡 建议：{{ issue.suggestion }}
 {% endif %}
 
-{% if issue.example %}
+{% if issue.old_code and issue.example %}
+修改前：
+```
+{{ issue.old_code }}
+```
+
+修改后：
+```
+{{ issue.example }}
+```
+{% elif issue.old_code %}
+修改前：
+```
+{{ issue.old_code }}
+```
+{% elif issue.example %}
+建议写法：
 ```
 {{ issue.example }}
 ```

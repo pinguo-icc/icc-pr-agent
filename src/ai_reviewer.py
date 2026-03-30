@@ -858,15 +858,40 @@ class AIReviewer:
 
             # Execute directly (no nested thread pool — thread budget is managed
             # by the outer ThreadPoolExecutor in _review_with_subagents).
-            result = sub_agent.invoke(
-                {
-                    "messages": [{"role": "user", "content": prompt}],
-                    "files": all_files,
-                },
-                config={
-                    "configurable": {"thread_id": thread_id},
-                },
-            )
+            # Retry on 429 rate-limit errors with exponential back-off.
+            last_invoke_error: Exception | None = None
+            result = None
+            for _attempt in range(_MAX_RETRIES):
+                try:
+                    result = sub_agent.invoke(
+                        {
+                            "messages": [{"role": "user", "content": prompt}],
+                            "files": all_files,
+                        },
+                        config={
+                            "configurable": {"thread_id": thread_id},
+                        },
+                    )
+                    last_invoke_error = None
+                    break
+                except Exception as invoke_exc:
+                    last_invoke_error = invoke_exc
+                    if "429" in str(invoke_exc) or "rate limit" in str(invoke_exc).lower():
+                        if _attempt < _MAX_RETRIES - 1:
+                            wait = _BACKOFF_SECONDS[_attempt]
+                            logger.warning(
+                                "Sub-agent 429 rate limit, %ds 后重试 "
+                                "(attempt %d/%d): group=%s batch=%d",
+                                wait, _attempt + 1, _MAX_RETRIES,
+                                group_name, batch.batch_index,
+                            )
+                            time.sleep(wait)
+                            continue
+                    # Non-retryable error, raise immediately
+                    raise
+
+            if last_invoke_error is not None:
+                raise last_invoke_error
 
             # Parse response
             messages = result.get("messages", [])
@@ -1075,6 +1100,7 @@ class AIReviewer:
                 description=item.get("description", ""),
                 suggestion=item.get("suggestion"),
                 example=item.get("example"),
+                old_code=item.get("old_code"),
             )
             for item in data.get("issues", [])
         ]

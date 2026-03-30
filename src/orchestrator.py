@@ -151,9 +151,16 @@ class ReviewOrchestrator:
         )
         self._record_store.save(record)
 
-        # n. Write back comment
+        # n. Write back comment (skip if all sub-agents failed)
         written_back = False
-        if options.write_back:
+        if review_result.all_failed:
+            logger.error(
+                "All review sub-agents failed for %s, "
+                "skipping PR comment write-back. summary=%s",
+                pr_info.pr_id,
+                review_result.summary,
+            )
+        elif options.write_back:
             try:
                 adapter.post_comment(pr_url, formatted_comment)
                 written_back = True
