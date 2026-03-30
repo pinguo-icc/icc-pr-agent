@@ -804,8 +804,9 @@ class AIReviewer:
             sub_system_prompt = (
                 f"你是负责审查 {group_name} 分组代码的专家子 Agent。\n"
                 f"你正在审查的文件属于 {group_name} 领域。\n"
-                f"请使用 code-review 技能对代码变更进行专业审查，"
-                f"严格按照该技能定义的 JSON 格式输出结果。\n\n"
+                f"请先加载 code-review 技能，然后按照技能中的「关联技能加载」要求，"
+                f"加载所有与本次审查代码语言相关的技能后，再输出审查结果。\n"
+                f"严格按照 code-review 技能定义的 JSON 格式输出结果。\n\n"
                 f"如果技能不可用，请从以下维度审查：\n"
                 f"1. 代码质量（quality）— 风格、可读性、可维护性\n"
                 f"2. 潜在缺陷（bug）— 逻辑错误、边界条件、资源泄漏\n"
