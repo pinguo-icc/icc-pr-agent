@@ -23,7 +23,7 @@ class TestConfigFromEnv:
         assert cfg.gitlab_url == "https://gitlab.com"
         assert cfg.llm_model == "gpt-4"
         assert cfg.log_level == "INFO"
-        assert cfg.review_storage_dir == ".pr_reviews"
+        assert cfg.review_storage_dir.endswith(".pr_reviews")
         assert cfg.pr_review_exclude == []
         assert cfg.skills_dir == ""
 

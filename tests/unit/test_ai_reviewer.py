@@ -79,6 +79,7 @@ def _make_mock_agent(content: str = _VALID_LLM_JSON, side_effect=None):
         mock_agent.invoke.side_effect = side_effect
     else:
         mock_msg = MagicMock()
+        mock_msg.type = "ai"
         mock_msg.content = content
         mock_msg.usage_metadata = None
         mock_agent.invoke.return_value = {"messages": [mock_msg]}
@@ -157,6 +158,7 @@ class TestAIReviewerBasic:
     ) -> None:
         """Agent fails once then succeeds on second attempt."""
         mock_msg = MagicMock()
+        mock_msg.type = "ai"
         mock_msg.content = _VALID_LLM_JSON
         mock_msg.usage_metadata = None
 
@@ -276,20 +278,22 @@ class TestAIReviewerBasic:
 
     @patch("src.ai_reviewer.create_deep_agent")
     @patch("src.ai_reviewer.init_chat_model")
-    def test_agent_invoke_receives_skills_files(
+    def test_agent_created_with_filesystem_backend(
         self, mock_init_model, mock_create_agent
     ) -> None:
-        """Agent invoke is called with files containing skills data."""
+        """Agent is created with FilesystemBackend passed as backend param."""
         mock_agent = _make_mock_agent()
         mock_create_agent.return_value = mock_agent
 
         reviewer = AIReviewer(_config())
         reviewer.review(_pr_info())
 
+        create_call = mock_create_agent.call_args
+        assert create_call.kwargs.get("backend") is not None
         invoke_call = mock_agent.invoke.call_args
         invoke_input = invoke_call[0][0]
         assert "messages" in invoke_input
-        assert "files" in invoke_input
+        assert "files" not in invoke_input
 
     @patch("src.ai_reviewer.create_deep_agent")
     @patch("src.ai_reviewer.init_chat_model")
@@ -619,6 +623,7 @@ class TestTokenUsageByGroup:
         """token_usage_by_group is populated after sub-agent review path."""
         # Create mock agent that returns usage metadata
         mock_msg = MagicMock()
+        mock_msg.type = "ai"
         mock_msg.content = _VALID_LLM_JSON
         mock_msg.usage_metadata = {
             "input_tokens": 100,
@@ -655,6 +660,7 @@ class TestTokenUsageByGroup:
     ) -> None:
         """Total token counters are updated for backward compatibility."""
         mock_msg = MagicMock()
+        mock_msg.type = "ai"
         mock_msg.content = _VALID_LLM_JSON
         mock_msg.usage_metadata = {
             "input_tokens": 200,

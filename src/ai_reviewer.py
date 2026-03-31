@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 import yaml
 from deepagents import create_deep_agent
-from deepagents.backends.utils import create_file_data
+from deepagents.backends.local_shell import LocalShellBackend
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
@@ -101,8 +101,6 @@ _DEFAULT_SUMMARY_USER_PROMPT = """\
 _MAX_RETRIES = 3
 _BACKOFF_SECONDS = [1, 2, 4]
 
-# Default skills directory (relative to project root)
-_DEFAULT_SKILLS_DIR = os.path.join(os.getcwd(), "skills")
 _DEFAULT_CONFIG_PATH = os.path.join(os.getcwd(), "pr-review.yaml")
 
 
@@ -150,9 +148,10 @@ class AIReviewer:
 
     def __init__(self, config: Config) -> None:
         self._config = config
-        self._skills_dir = config.skills_dir or _DEFAULT_SKILLS_DIR
         config_path = _DEFAULT_CONFIG_PATH
         self._prompts = _load_prompts(config_path)
+        # Workspace directory (contains skills/ and .pr_reviews/)
+        self._workspace_dir = config.work_dir or os.getcwd()
         # Token usage tracking (backward compatible)
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -458,49 +457,27 @@ class AIReviewer:
         model = self._create_fallback_model() if use_fallback else self._create_model()
         if model is None:
             raise AIModelError("Fallback 模型未配置")
-        skills_files = self._load_skills_files()
+
+        backend = self._create_backend()
 
         agent = create_deep_agent(
             model=model,
             system_prompt=self._prompts["system_prompt"],
             skills=["/skills/"],
+            backend=backend,
             checkpointer=MemorySaver(),
+            debug=True,
         )
-        return agent, skills_files
+        return agent
 
-    def _load_skills_files(self) -> dict:
-        """Load SKILL.md files from the skills directory into state backend format."""
-        skills_files = {}
-        skills_dir = self._skills_dir
-        if not os.path.isdir(skills_dir):
-            logger.warning("Skills 目录不存在: %s", skills_dir)
-            return skills_files
+    def _create_backend(self) -> LocalShellBackend:
+        """Create a LocalShellBackend rooted at the workspace directory.
 
-        for entry in os.listdir(skills_dir):
-            skill_dir = os.path.join(skills_dir, entry)
-            if not os.path.isdir(skill_dir):
-                continue
-            skill_md = os.path.join(skill_dir, "SKILL.md")
-            if not os.path.isfile(skill_md):
-                continue
-            try:
-                content = open(skill_md, encoding="utf-8").read()
-                virtual_path = f"/skills/{entry}/SKILL.md"
-                skills_files[virtual_path] = create_file_data(content)
-                logger.info(
-                    "已加载 skill: %s (%d chars)",
-                    virtual_path,
-                    len(content),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("无法读取 skill 文件 %s: %s", skill_md, exc)
-
-        logger.info(
-            "Skills 加载完成: %d 个 skill, 来源目录: %s",
-            len(skills_files),
-            skills_dir,
-        )
-        return skills_files
+        The workspace directory should contain:
+        - skills/          — skill definitions (SKILL.md etc.)
+        - .pr_reviews/     — PR source code repos
+        """
+        return LocalShellBackend(root_dir=self._workspace_dir, virtual_mode=True)
 
     # ------------------------------------------------------------------
     # Public API
@@ -846,29 +823,6 @@ class AIReviewer:
             return None
 
     @staticmethod
-    def _load_source_files(
-        repo_dir: str | None, file_paths: list[str],
-    ) -> dict:
-        """Load source files from the cloned repo into StateBackend format."""
-        source_files = {}
-        if not repo_dir:
-            return source_files
-        for rel_path in file_paths:
-            full_path = os.path.join(repo_dir, rel_path)
-            if not os.path.isfile(full_path):
-                continue
-            try:
-                content = open(full_path, encoding="utf-8").read()
-                # Use /workspace/ prefix to match DeepAgents SDK read_file path resolution
-                virtual_path = f"/workspace/{rel_path}"
-                source_files[virtual_path] = create_file_data(content)
-            except Exception as exc:
-                logger.warning("无法读取源文件 %s: %s", full_path, exc)
-        if source_files:
-            logger.info("已加载 %d 个源文件供 Agent 参考", len(source_files))
-        return source_files
-
-    @staticmethod
     def _extract_repo_url(pr_info: PRInfo) -> str | None:
         """Extract clone URL from PR URL."""
         # GitHub: https://github.com/owner/repo/pull/42 → https://github.com/owner/repo.git
@@ -902,11 +856,8 @@ class AIReviewer:
         start_time = time.monotonic()
         try:
             model = self._create_model()
-            skills_files = self._load_skills_files()
 
-            # Load source files for the batch from cloned repo
-            source_files = self._load_source_files(repo_dir, batch.file_paths)
-            all_files = {**skills_files, **source_files}
+            backend = self._create_backend()
 
             # Build sub-agent system prompt with group context
             sub_system_prompt = (
@@ -935,7 +886,9 @@ class AIReviewer:
                 name=f"review-{group_name}",
                 skills=["/skills/"],
                 tools=tools,
+                backend=backend,
                 checkpointer=MemorySaver(),
+                debug=True,
             )
 
             # Build review prompt
@@ -974,7 +927,6 @@ class AIReviewer:
                     result = sub_agent.invoke(
                         {
                             "messages": [{"role": "user", "content": prompt}],
-                            "files": all_files,
                         },
                         config={
                             "configurable": {"thread_id": thread_id},
@@ -1091,7 +1043,7 @@ class AIReviewer:
                     self._actual_model = self._config.fallback_llm_model
                     content, fb_prompt_tokens, fb_completion_tokens, fb_total_tokens = (
                         self._invoke_subagent_fallback(
-                            sub_system_prompt, prompt, all_files, tools,
+                            sub_system_prompt, prompt, tools,
                             group_name, batch, trace,
                         )
                     )
@@ -1144,7 +1096,6 @@ class AIReviewer:
         self,
         system_prompt: str,
         prompt: str,
-        all_files: dict,
         tools: list,
         group_name: str,
         batch: Batch,
@@ -1159,12 +1110,15 @@ class AIReviewer:
         if fallback_model is None:
             raise AIModelError("Fallback 模型未配置")
 
+        backend = self._create_backend()
+
         sub_agent = create_deep_agent(
             model=fallback_model,
             system_prompt=system_prompt,
             name=f"fallback-{group_name}",
             skills=["/skills/"],
             tools=tools,
+            backend=backend,
             checkpointer=MemorySaver(),
         )
 
@@ -1189,7 +1143,6 @@ class AIReviewer:
         result = sub_agent.invoke(
             {
                 "messages": [{"role": "user", "content": prompt}],
-                "files": all_files,
             },
             config={
                 "configurable": {"thread_id": thread_id},
@@ -1292,9 +1245,9 @@ class AIReviewer:
                     model_label, attempt + 1, _MAX_RETRIES,
                 )
                 if use_fallback:
-                    agent, skills_files = self._create_agent(use_fallback=True)
+                    agent = self._create_agent(use_fallback=True)
                 else:
-                    agent, skills_files = self._create_agent()
+                    agent = self._create_agent()
                 thread_id = f"review-{datetime.now(timezone.utc).timestamp()}"
 
                 # Langfuse span under the top-level PR trace
@@ -1318,7 +1271,6 @@ class AIReviewer:
                 result = agent.invoke(
                     {
                         "messages": [{"role": "user", "content": prompt}],
-                        "files": skills_files,
                     },
                     config={
                         "configurable": {"thread_id": thread_id},

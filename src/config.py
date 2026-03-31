@@ -106,6 +106,9 @@ class Config:
     # Symbol index toggle (disable to skip AST scanning and lookup_symbol tool)
     symbol_index_enabled: bool = True
 
+    # Workspace directory (contains skills/ and .pr_reviews/)
+    work_dir: str = ""
+
     # Langfuse observability
     langfuse_enabled: bool = True
     langfuse_public_key: str = ""
@@ -241,6 +244,16 @@ class Config:
         else:
             symbol_index_enabled = True
 
+        # --- work_dir: env > default(cwd) ---
+        work_dir = os.environ.get("WORK_DIR", "") or os.getcwd()
+
+        # --- review_storage_dir: resolve under workspace_dir ---
+        raw_storage_dir = os.environ.get("REVIEW_STORAGE_DIR", ".pr_reviews")
+        if os.path.isabs(raw_storage_dir):
+            review_storage_dir = raw_storage_dir
+        else:
+            review_storage_dir = os.path.join(work_dir, raw_storage_dir)
+
         return cls(
             langfuse_enabled=os.environ.get(
                 "LANGFUSE_ENABLED", "true"
@@ -262,9 +275,7 @@ class Config:
             fallback_llm_model=os.environ.get("FALLBACK_LLM_MODEL", ""),
             fallback_llm_base_url=os.environ.get("FALLBACK_LLM_BASE_URL", ""),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
-            review_storage_dir=os.environ.get(
-                "REVIEW_STORAGE_DIR", ".pr_reviews"
-            ),
+            review_storage_dir=review_storage_dir,
             pr_review_exclude=exclude_patterns,
             skills_dir=os.environ.get("SKILLS_DIR", ""),
             webhook_secret_github=os.environ.get("WEBHOOK_SECRET_GITHUB", ""),
@@ -279,4 +290,5 @@ class Config:
             review_timeout=review_timeout,
             token_budget=token_budget,
             symbol_index_enabled=symbol_index_enabled,
+            work_dir=work_dir,
         )
