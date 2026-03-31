@@ -157,17 +157,22 @@ class SymbolIndexer:
             # Already cloned — fetch target branch and reset
             logger.info("更新已有仓库: %s (branch=%s)", repo_dir, branch)
             try:
+                cmd = ["git", "fetch", "origin", branch, "--depth=1"]
+                logger.info("执行命令: %s (cwd=%s)", " ".join(cmd), repo_dir)
                 subprocess.run(
-                    ["git", "fetch", "origin", branch, "--depth=1"],
+                    cmd,
                     cwd=repo_dir, check=True, capture_output=True, timeout=120,
                 )
-                # Use FETCH_HEAD — shallow fetch doesn't create origin/branch ref
+                cmd = ["git", "checkout", "FETCH_HEAD", "--detach"]
+                logger.info("执行命令: %s (cwd=%s)", " ".join(cmd), repo_dir)
                 subprocess.run(
-                    ["git", "checkout", "FETCH_HEAD", "--detach"],
+                    cmd,
                     cwd=repo_dir, check=True, capture_output=True, timeout=30,
                 )
+                cmd = ["git", "clean", "-fdx"]
+                logger.info("执行命令: %s (cwd=%s)", " ".join(cmd), repo_dir)
                 subprocess.run(
-                    ["git", "clean", "-fdx"],
+                    cmd,
                     cwd=repo_dir, check=True, capture_output=True, timeout=30,
                 )
                 return repo_dir
@@ -177,14 +182,24 @@ class SymbolIndexer:
                 shutil.rmtree(repo_dir, ignore_errors=True)
 
         # Fresh clone
-        logger.info("Clone 仓库: %s -> %s", repo_url, repo_dir)
         os.makedirs(repo_dir, exist_ok=True)
+        cmd = ["git", "clone", "--depth=1", "--branch", branch, repo_url, repo_dir]
+        logger.info("执行命令: %s", " ".join(cmd))
         try:
-            cmd = ["git", "clone", "--depth=1", "--branch", branch, repo_url, repo_dir]
-            subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+            result = subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+            logger.info("Clone 完成: %s (stdout=%s)", repo_dir, result.stdout.decode()[:200])
             return repo_dir
+        except FileNotFoundError as exc:
+            logger.error("git 命令未找到，请确保 Docker 镜像中已安装 git: %s", exc)
+            raise SymbolIndexError(f"Clone failed: git not found - {exc}") from exc
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "git clone 失败: cmd=%s exit_code=%d stderr=%s",
+                " ".join(cmd), exc.returncode, exc.stderr.decode()[:500],
+            )
+            raise SymbolIndexError(f"Clone failed: {exc}") from exc
         except Exception as exc:
-            logger.warning("Failed to clone repo: %s", exc)
+            logger.error("Clone 异常: cmd=%s error=%s", " ".join(cmd), exc)
             raise SymbolIndexError(f"Clone failed: {exc}") from exc
 
     def _scan_directory(self, root: str) -> list[SymbolEntry]:
