@@ -430,6 +430,8 @@ class AIReviewer:
             model_kwargs["api_key"] = self._config.llm_api_key
         if self._config.llm_base_url:
             model_kwargs["base_url"] = self._config.llm_base_url
+        model_kwargs["timeout"] = 300
+        model_kwargs["extra_body"] = {"enable_thinking": False}
         return init_chat_model(self._build_model_string(), **model_kwargs)
 
     def _create_fallback_model(self):
@@ -446,6 +448,8 @@ class AIReviewer:
         base_url = self._config.fallback_llm_base_url or self._config.llm_base_url
         if base_url:
             model_kwargs["base_url"] = base_url
+        model_kwargs["timeout"] = 300
+        model_kwargs["extra_body"] = {"enable_thinking": False}
         return init_chat_model(model_str, **model_kwargs)
 
     def _create_agent(self, *, use_fallback: bool = False):
@@ -864,6 +868,15 @@ class AIReviewer:
 
             backend = self._create_backend()
 
+            # Build review prompt (before agent creation so it's available for fallback)
+            prompt = self._prompts["review_user_prompt"].format(
+                title=pr_info.title,
+                description=pr_info.description or "无描述",
+                source_branch=pr_info.source_branch,
+                target_branch=pr_info.target_branch,
+                diff=batch.diff_content,
+            )
+
             # Build sub-agent system prompt with group context
             repo_path_hint = ""
             if repo_dir:
@@ -904,15 +917,6 @@ class AIReviewer:
                 backend=backend,
                 checkpointer=MemorySaver(),
                 debug=True,
-            )
-
-            # Build review prompt
-            prompt = self._prompts["review_user_prompt"].format(
-                title=pr_info.title,
-                description=pr_info.description or "无描述",
-                source_branch=pr_info.source_branch,
-                target_branch=pr_info.target_branch,
-                diff=batch.diff_content,
             )
 
             thread_id = (
