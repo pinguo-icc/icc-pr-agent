@@ -865,6 +865,15 @@ class AIReviewer:
             backend = self._create_backend()
 
             # Build sub-agent system prompt with group context
+            repo_path_hint = ""
+            if repo_dir:
+                rel = os.path.relpath(repo_dir, self._workspace_dir)
+                repo_path_hint = (
+                    f"\n\n## 源代码目录\n"
+                    f"本项目的源代码位于 /{rel}/ 目录下。"
+                    f"当你需要读取源文件时，请使用 /{rel}/<文件路径> 的完整路径。"
+                    f"例如：/{rel}/internal/application/ops/v4_redis.go"
+                )
             sub_system_prompt = (
                 f"你是负责审查 {group_name} 分组代码的专家子 Agent。\n"
                 f"你正在审查的文件属于 {group_name} 领域。\n"
@@ -876,6 +885,7 @@ class AIReviewer:
                 f"2. 潜在缺陷（bug）— 逻辑错误、边界条件、资源泄漏\n"
                 f"3. 安全风险（security）— 注入、信息泄露、权限问题\n"
                 f"4. 改进建议（improvement）— 性能优化、更好的实现方式"
+                f"{repo_path_hint}"
             )
 
             # Build tools for sub-agent
@@ -966,6 +976,7 @@ class AIReviewer:
             # Parse response
             messages = result.get("messages", [])
             if not messages:
+                print("result", result)
                 raise AIModelError("Sub-agent 返回空消息")
 
             # Dump full message chain for token analysis
