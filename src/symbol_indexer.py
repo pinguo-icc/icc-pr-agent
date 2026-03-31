@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from dataclasses import asdict
 from pathlib import Path
@@ -129,9 +130,11 @@ class SymbolIndexer:
         """Parse repo URL into (platform, owner, repo).
 
         Example: https://github.com/pinguo-icc/order-svc.git -> (github, pinguo-icc, order-svc)
+        Handles token-embedded URLs: https://token@github.com/owner/repo.git
         """
-        import re
-        m = re.match(r"https?://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$", repo_url)
+        # Strip embedded credentials (token@) before parsing
+        clean_url = re.sub(r"(https?://)[^@]+@", r"\1", repo_url)
+        m = re.match(r"https?://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$", clean_url)
         if m:
             host = m.group(1)  # github.com
             owner = m.group(2)
@@ -145,13 +148,19 @@ class SymbolIndexer:
                 platform = host.replace(".", "_")
             return platform, owner, repo
         # Fallback: use sanitized URL
-        safe = repo_url.replace("/", "_").replace(":", "_").replace(".", "_")
+        safe = clean_url.replace("/", "_").replace(":", "_").replace(".", "_")
         return "unknown", safe, "repo"
 
     def _ensure_repo(self, repo_url: str, branch: str) -> str:
         """Clone or update repo in persistent directory under cache_dir/repos/."""
         repo_dir = self._repo_dir_path(repo_url)
         git_dir = os.path.join(repo_dir, ".git")
+
+        def _safe_cmd(parts: list[str]) -> str:
+            """Join command parts with token masked for logging."""
+            return " ".join(
+                re.sub(r"https://[^@]+@", "https://***@", p) for p in parts
+            )
 
         if os.path.isdir(git_dir):
             # Already cloned — fetch target branch and reset
@@ -184,7 +193,7 @@ class SymbolIndexer:
         # Fresh clone
         os.makedirs(repo_dir, exist_ok=True)
         cmd = ["git", "clone", "--depth=1", "--branch", branch, repo_url, repo_dir]
-        logger.info("执行命令: %s", " ".join(cmd))
+        logger.info("执行命令: %s", _safe_cmd(cmd))
         try:
             result = subprocess.run(cmd, check=True, capture_output=True, timeout=120)
             logger.info("Clone 完成: %s (stdout=%s)", repo_dir, result.stdout.decode()[:200])
@@ -195,11 +204,11 @@ class SymbolIndexer:
         except subprocess.CalledProcessError as exc:
             logger.error(
                 "git clone 失败: cmd=%s exit_code=%d stderr=%s",
-                " ".join(cmd), exc.returncode, exc.stderr.decode()[:500],
+                _safe_cmd(cmd), exc.returncode, exc.stderr.decode()[:500],
             )
             raise SymbolIndexError(f"Clone failed: {exc}") from exc
         except Exception as exc:
-            logger.error("Clone 异常: cmd=%s error=%s", " ".join(cmd), exc)
+            logger.error("Clone 异常: cmd=%s error=%s", _safe_cmd(cmd), exc)
             raise SymbolIndexError(f"Clone failed: {exc}") from exc
 
     def _scan_directory(self, root: str) -> list[SymbolEntry]:

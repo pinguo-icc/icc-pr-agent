@@ -785,7 +785,7 @@ class AIReviewer:
                 cache_dir=self._config.review_storage_dir,
             )
             # Extract repo URL and branch from pr_info
-            repo_url = self._extract_repo_url(pr_info)
+            repo_url = self._extract_repo_url(pr_info, self._config.github_token)
             if not repo_url:
                 logger.warning("无法从 PR 信息中提取仓库 URL，跳过符号索引构建")
                 return None
@@ -811,7 +811,7 @@ class AIReviewer:
         If already cloned, fetch and reset to the PR's source branch.
         This ensures source files are available even when symbol_index is disabled.
         """
-        repo_url = self._extract_repo_url(pr_info)
+        repo_url = self._extract_repo_url(pr_info, self._config.github_token)
         if not repo_url:
             return None
         try:
@@ -823,13 +823,18 @@ class AIReviewer:
             return None
 
     @staticmethod
-    def _extract_repo_url(pr_info: PRInfo) -> str | None:
-        """Extract clone URL from PR URL."""
+    def _extract_repo_url(pr_info: PRInfo, github_token: str = "") -> str | None:
+        """Extract clone URL from PR URL.
+
+        For private repos, embeds the GitHub token in the URL for authentication.
+        """
         # GitHub: https://github.com/owner/repo/pull/42 → https://github.com/owner/repo.git
         if "github.com" in pr_info.pr_url:
-            m = re.match(r"(https://github\.com/[^/]+/[^/]+)", pr_info.pr_url)
+            m = re.match(r"(https://)(github\.com/[^/]+/[^/]+)", pr_info.pr_url)
             if m:
-                return m.group(1) + ".git"
+                if github_token:
+                    return f"{m.group(1)}{github_token}@{m.group(2)}.git"
+                return f"{m.group(1)}{m.group(2)}.git"
         return None
 
     @staticmethod
